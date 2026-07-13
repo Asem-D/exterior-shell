@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "exterior-shell"
+version = "1.0.0"
+description = "Extract lightweight 3D exterior shells from BIM models (IFC) for GIS visualization. Outputs GeoPackage, GeoJSON, and stripped IFC."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Asem Daaboul", email = "asem.daaboul@gmail.com" },
+]
+keywords = ["bim", "ifc", "gis", "geopackage", "exterior-shell", "building-envelope", "3d", "ifcopenshell"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.urls]
+Homepage = "https://github.com/Asem-D/exterior-shell"
+Repository = "https://github.com/Asem-D/exterior-shell"
+Issues = "https://github.com/Asem-D/exterior-shell/issues"
+dependencies = [
+    "ifcopenshell>=0.7.0",
+    "shapely>=2.0",
+    "numpy>=1.24",
+    "click>=8.0",
+    "geopandas>=0.14",
+]
+
+[project.optional-dependencies]
+ai = [
+    "openai>=1.0",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+exterior-shell = "exterior_shell.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exterior_shell"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
