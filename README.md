@@ -13,13 +13,13 @@ Optional AI-assisted classification handles ambiguous elements (walls, columns, 
 
 BIM models contain everything: walls, windows, roofs, HVAC, furniture, pipes. When you need just the building envelope for a GIS deliverable, you're left with bad options:
 
-| Approach | Problem |
-|----------|---------|
-| Full BIM-to-GIS conversion | 5-10x heavier than needed, interior geometry bloats the model |
-| Manual cleanup in Revit/ArchiCAD | Hours per model, doesn't scale |
-| Esri ExteriorShell (ArcGIS Pro) | Unreliable: misses roofs, includes interior junk, frequent fallbacks |
-| FME | Works but $4K+/year, overkill for this one task |
-| IfcConvert `--exterior-only` | Outputs mesh formats (OBJ, glTF), not GIS-native |
+| Approach | GIS-native output | Stripped IFC | Cost |
+|----------|:---:|:---:|:---:|
+| **exterior-shell** | ✅ GeoPackage | ✅ | Free |
+| Esri ExteriorShell (ArcGIS Pro) | ❌ No standalone output | ❌ | ArcGIS Pro license |
+| FME (IFC Connector) | ✅ Via translation | ❌ | $4K+/yr (station-based) |
+| IfcConvert `--exterior-only` | ❌ Mesh formats (OBJ, glTF) | ❌ | Free |
+| Manual Revit/ArchiCAD cleanup | ❌ | ❌ | Hours per model |
 
 `exterior-shell` does one thing and gets it right: clean exterior shell, GIS-ready output, under 30 seconds.
 
