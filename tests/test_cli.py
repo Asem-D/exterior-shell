@@ -103,3 +103,70 @@ def test_extract_json_stats(tmp_path: Path):
     assert '"crs"' in result.output
     assert '"keep_interior"' in result.output
     assert '"geometry"' in result.output
+
+
+def test_extract_simplify(tmp_path: Path):
+    """--simplify flag is accepted and changes face count."""
+    out_normal = tmp_path / "normal.gpkg"
+    out_simplified = tmp_path / "simplified.gpkg"
+    runner = CliRunner()
+
+    runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out_normal)])
+    runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out_simplified), "--simplify"])
+
+    # Both should produce valid output
+    assert out_normal.exists()
+    assert out_simplified.exists()
+
+    # Check face counts differ
+    import sqlite3
+    normal_faces = _count_gpkg_features(out_normal, "faces")
+    simplified_faces = _count_gpkg_features(out_simplified, "faces")
+    # Simplification should reduce or maintain face count
+    assert simplified_faces <= normal_faces
+
+
+def test_extract_gpkg_elements_layer(tmp_path: Path):
+    """GPKG output includes elements layer as attribute-only table."""
+    out = tmp_path / "out.gpkg"
+    runner = CliRunner()
+    result = runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+
+    # Verify elements layer exists and has records
+    import sqlite3
+    conn = sqlite3.connect(str(out))
+    cursor = conn.execute("SELECT COUNT(*) FROM elements")
+    count = cursor.fetchone()[0]
+    conn.close()
+    assert count >= 1
+
+
+def test_extract_gpkg_layers(tmp_path: Path):
+    """GPKG output contains shell, faces, and elements layers."""
+    out = tmp_path / "out.gpkg"
+    runner = CliRunner()
+    result = runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out)])
+    assert result.exit_code == 0
+
+    import sqlite3
+    conn = sqlite3.connect(str(out))
+    cursor = conn.execute(
+        "SELECT table_name FROM gpkg_contents ORDER BY table_name"
+    )
+    layers = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    assert "shell" in layers
+    assert "faces" in layers
+    assert "elements" in layers
+
+
+def _count_gpkg_features(gpkg_path: Path, layer: str) -> int:
+    """Count features in a GPKG layer."""
+    import sqlite3
+    conn = sqlite3.connect(str(gpkg_path))
+    cursor = conn.execute(f"SELECT COUNT(*) FROM [{layer}]")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count

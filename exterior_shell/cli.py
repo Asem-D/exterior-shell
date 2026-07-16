@@ -14,6 +14,7 @@ from . import __version__
 from .core.parser import parse_ifc
 from .core.classifier import classify_all, resolve_ambiguities
 from .core.assembler import assemble_shell, get_shell_stats
+from .core.simplifier import simplify_shell
 from .export.geopackage import export_geopackage, write_extraction_report
 from .export.stripped_ifc import export_stripped_ifc
 
@@ -100,6 +101,12 @@ def main():
     default=False,
     help="Output stats as JSON to stdout",
 )
+@click.option(
+    "--simplify",
+    is_flag=True,
+    default=False,
+    help="Merge coplanar triangles and remove tiny faces",
+)
 def extract(
     input_file: str,
     output_file: str | None,
@@ -112,6 +119,7 @@ def extract(
     crs: str,
     keep_interior: bool,
     stripped_ifc: bool,
+    simplify: bool,
 ):
     """Extract exterior shell from an IFC file.
 
@@ -184,7 +192,21 @@ def extract(
         err=True,
     )
 
-    # ── Step 4: Export ─────────────────────────────────────────────────
+    # ── Step 4: Simplify ─────────────────────────────────────────────
+    if simplify:
+        before = shell.total_face_count
+        shell.faces = simplify_shell(
+            shell.faces,
+            min_area=1e-6,
+            angle_threshold=0.01,
+        )
+        shell.total_face_count = len(shell.faces)
+        click.echo(
+            f"Simplified: {before} -> {shell.total_face_count} faces",
+            err=True,
+        )
+
+    # ── Step 5: Export ────────────────────────────────────────────────
     click.echo(f"Exporting to {output_path}...", err=True)
 
     if output_format == "geojson":
@@ -205,11 +227,12 @@ def extract(
             crs=crs,
         )
 
-    # Store CRS and keep_interior in result for JSON output
+    # Store CRS, keep_interior, and simplify in result for JSON output
     result.crs = crs
     result.keep_interior = keep_interior
+    result.simplify = simplify
 
-    # ── Step 5: Report ─────────────────────────────────────────────────
+    # ── Step 6: Report ───────────────────────────────────────────────
     elapsed = time.time() - start_time
 
     if report and report_data:
@@ -217,7 +240,7 @@ def extract(
         write_extraction_report(result, report_path)
         click.echo(f"Report written to {report_path}", err=True)
 
-    # ── Step 5b: Stripped IFC Export ───────────────────────────────────
+    # ── Step 6b: Stripped IFC Export ─────────────────────────────────
     stripped_result = None
     if stripped_ifc and report_data:
         stripped_output = output_path.with_name(

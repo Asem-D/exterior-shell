@@ -16,7 +16,7 @@ BIM models contain everything: walls, windows, roofs, HVAC, furniture, pipes. Wh
 | Approach | GIS-native output | Stripped IFC | Cost |
 |----------|:---:|:---:|:---:|
 | **exterior-shell** | ✅ GeoPackage | ✅ | Free |
-| Esri ExteriorShell (ArcGIS Pro) | ❌ No standalone output | ❌ | ArcGIS Pro license |
+| ArcGIS Pro Building Layer | ❌ No standalone output (manual GDB export only) | ❌ | ArcGIS Pro license |
 | FME (IFC Connector) | ✅ Via translation | ❌ | $4K+/yr (station-based) |
 | IfcConvert `--exterior-only` | ❌ Mesh formats (OBJ, glTF) | ❌ | Free |
 | Manual Revit/ArchiCAD cleanup | ❌ | ❌ | Hours per model |
@@ -69,6 +69,7 @@ exterior-shell extract building.ifc -f geojson --ai
 ```bash
 exterior-shell extract building.ifc --crs EPSG:3857      # Output in Web Mercator
 exterior-shell extract building.ifc --keep-interior       # Include interior-facing faces
+exterior-shell extract building.ifc --simplify            # Merge coplanar faces, filter tiny triangles
 exterior-shell extract building.ifc --json-stats          # Machine-readable output
 exterior-shell info building.ifc                          # Inspect IFC file
 ```
@@ -84,10 +85,15 @@ IFC File
   │   │
   │   └─ [--ai] Vision model reclassifies ambiguous elements from rendered views
   │
-  ├─ Assemble ─ Merge exterior faces, remove hidden interior-facing geometry
-  │
-  └─ Export
-      ├─ GeoPackage (.gpkg) ─ GIS-native multipatch with element attributes
+      ├─ Assemble ─ Merge exterior faces, remove hidden interior-facing geometry
+      │
+      ├─ [--simplify] ─ Filter tiny faces, merge coplanar triangles
+      │
+      └─ Export
+      ├─ GeoPackage (.gpkg) ─ GIS-native multipatch with 3D coordinates
+      │   ├─ shell layer ─ merged exterior shell
+      │   ├─ faces layer ─ individual triangular faces with metadata
+      │   └─ elements layer ─ element summary (attribute-only table)
       ├─ GeoJSON (.geojson) ─ extruded polygons for lightweight visualization
       └─ Stripped IFC (.ifc) ─ structurally valid IFC with interiors removed
 ```
@@ -125,11 +131,12 @@ exterior_shell/
 │   ├── parser.py       # IFC parsing with ifcopenshell
 │   ├── classifier.py   # Rule-based classification engine
 │   ├── assembler.py    # Geometry assembly + multipatch creation
+│   ├── simplifier.py   # Coplanar merge, tiny-face filtering
 │   └── models.py       # Data classes (Element, Classification, Shell)
 ├── ai/
 │   └── ...             # Vision model classification (Phase 2)
 ├── export/
-│   ├── geopackage.py   # GeoPackage + GeoJSON export
+│   ├── geopackage.py   # GeoPackage + GeoJSON export (3D, attribute tables)
 │   └── stripped_ifc.py # Stripped IFC export
 └── utils/
     └── ...             # Geometry helpers, I/O utilities

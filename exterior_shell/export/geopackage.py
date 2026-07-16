@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 
 import geopandas as gpd
@@ -18,16 +19,17 @@ logger = logging.getLogger(__name__)
 
 
 def _faces_to_polygons(faces: list[Face]) -> list[Polygon]:
-    """Convert triangulated faces to simple polygons.
+    """Convert triangulated faces to 3D polygons.
 
-    For GeoPackage/Multipatch output, each face becomes a triangle polygon.
-    This is the simplest approach that preserves the 3D geometry.
+    Ensures Z coordinates are preserved. Each face becomes a triangle
+    polygon with explicit 3D semantics for Multipatch output.
     """
     polygons = []
     for face in faces:
         try:
-            # Create 3D polygon from triangle vertices
             coords = [tuple(v) for v in face.vertices]
+            # Ensure all coordinates are 3-tuples (x, y, z)
+            coords = [(c[0], c[1], c[2] if len(c) > 2 else 0.0) for c in coords]
             # Close the ring
             if coords[0] != coords[-1]:
                 coords.append(coords[0])
@@ -39,21 +41,46 @@ def _faces_to_polygons(faces: list[Face]) -> list[Polygon]:
     return polygons
 
 
-def _shell_to_single_polygon(faces: list[Face]) -> MultiPolygon | Polygon | None:
-    """Try to merge shell faces into a single merged polygon.
+def _ensure_3d(geom) -> bool:
+    """Check whether a geometry has Z coordinates."""
+    if geom is None:
+        return False
+    if geom.geom_type == "Polygon":
+        return len(geom.exterior.coords[0]) >= 3
+    if geom.geom_type == "MultiPolygon":
+        for p in geom.geoms:
+            if len(p.exterior.coords[0]) >= 3:
+                return True
+        return False
+    return False
 
-    For GIS visualization, a single multipolygon is often more useful
-    than individual triangles.
+
+def _shell_to_single_polygon(faces: list[Face]) -> MultiPolygon | Polygon | None:
+    """Merge shell faces into a single 3D multipolygon.
+
+    Preserves Z coordinates through unary_union for proper 3D GIS
+    visualization in ArcGIS Pro and other platforms.
     """
     polygons = _faces_to_polygons(faces)
     if not polygons:
         return None
 
+    # Verify all inputs have Z before merge
+    all_3d = all(
+        len(p.exterior.coords[0]) >= 3 for p in polygons
+    )
+
     try:
         merged = unary_union(polygons)
+        # Verify Z survived the union
+        if all_3d and not _ensure_3d(merged):
+            logger.warning(
+                "Z coordinates lost during unary_union, "
+                "falling back to MultiPolygon of originals"
+            )
+            return MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
         return merged
     except Exception:
-        # If union fails, return the collection
         return MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
 
 
@@ -66,9 +93,10 @@ def export_geopackage(
 ) -> ExtractionResult:
     """Export shell geometry to GeoPackage.
 
-    Creates two layers:
-    1. 'shell' — the merged exterior shell as a single multipolygon
-    2. 'faces' — individual triangular faces with element metadata
+    Creates three layers:
+    1. 'shell' — the merged exterior shell as a 3D multipolygon (PolygonZ)
+    2. 'faces' — individual triangular faces with element metadata (PolygonZ)
+    3. 'elements' — element summary as an attribute-only table (no geometry)
 
     Args:
         shell: Assembled shell geometry.
@@ -92,9 +120,10 @@ def export_geopackage(
         output_face_count=shell.total_face_count,
     )
 
-    # ── Layer 1: Merged shell ────────────────────────────────────────
+    # ── Layer 1: Merged shell (3D) ──────────────────────────────────
     merged = _shell_to_single_polygon(shell.faces)
     if merged is not None:
+        has_z = _ensure_3d(merged)
         shell_data = gpd.GeoDataFrame(
             {
                 "id": [1],
@@ -106,14 +135,19 @@ def export_geopackage(
             crs=crs,
         )
         shell_data.to_file(str(output_path), layer="shell", driver="GPKG")
-        logger.info(f"Written 'shell' layer with 1 feature")
+        logger.info(f"Written 'shell' layer with 1 feature (3D={has_z})")
 
-    # ── Layer 2: Individual faces ────────────────────────────────────
+    # ── Layer 2: Individual faces (3D) ───────────────────────────────
     if shell.faces:
         faces_data = []
         for i, face in enumerate(shell.faces):
             try:
                 coords = [tuple(v) for v in face.vertices]
+                # Ensure 3D coordinates
+                coords = [
+                    (c[0], c[1], c[2] if len(c) > 2 else 0.0)
+                    for c in coords
+                ]
                 if coords[0] != coords[-1]:
                     coords.append(coords[0])
                 poly = Polygon(coords)
@@ -131,10 +165,16 @@ def export_geopackage(
 
         if faces_data:
             faces_df = gpd.GeoDataFrame(faces_data, crs=crs)
-            faces_df.to_file(str(output_path), layer="faces", driver="GPKG")
-            logger.info(f"Written 'faces' layer with {len(faces_data)} features")
+            faces_df.to_file(
+                str(output_path),
+                layer="faces",
+                driver="GPKG",
+            )
+            logger.info(
+                f"Written 'faces' layer with {len(faces_data)} features (3D=True)"
+            )
 
-    # ── Layer 3: Element summary ─────────────────────────────────────
+    # ── Layer 3: Element summary (attribute-only) ────────────────────
     element_rows = []
     for elem in shell.source_elements:
         element_rows.append({
@@ -148,11 +188,22 @@ def export_geopackage(
 
     if element_rows:
         elem_df = pd.DataFrame(element_rows)
-        # Write elements as CSV alongside the GPKG (no geometry)
-        csv_path = output_path.with_suffix('.elements.csv')
-        elem_df.to_csv(csv_path, index=False)
-        logger.info(f"Written 'elements' CSV with {len(element_rows)} records to {csv_path}")
-        logger.info(f"Written 'elements' layer with {len(element_rows)} features")
+        # Write as attribute-only table in the same GPKG
+        conn = sqlite3.connect(str(output_path))
+        elem_df.to_sql("elements", conn, if_exists="replace", index=False)
+        # Register in gpkg_contents so the GPKG driver knows about it
+        cursor = conn.execute(
+            "INSERT OR REPLACE INTO gpkg_contents "
+            "(table_name, data_type, srs_id) "
+            "VALUES (?, 'attributes', 4326)",
+            ("elements",),
+        )
+        conn.commit()
+        conn.close()
+        logger.info(
+            f"Written 'elements' layer with {len(element_rows)} records "
+            f"(attribute-only, no geometry)"
+        )
 
     # Calculate file size
     if output_path.exists():
@@ -166,19 +217,18 @@ def export_geojson(
     report: ClassificationReport,
     output_path: str | Path,
     input_file: str = "",
-    extrude_height: float = 0.0,
     crs: str = "EPSG:4326",
 ) -> ExtractionResult:
     """Export shell geometry to GeoJSON format.
 
     Creates a single merged multipolygon feature with metadata.
+    Supports 3D coordinates per RFC 7946 Section 3.2.
 
     Args:
         shell: Assembled shell geometry.
         report: Classification report.
         output_path: Path for output .geojson file.
         input_file: Original input file path (for report).
-        extrude_height: If > 0, extrude polygon to this height (for LOD1).
 
     Returns:
         ExtractionResult with statistics.
@@ -200,16 +250,7 @@ def export_geojson(
         logger.warning("No geometry to export")
         return result
 
-    # For GeoJSON, we use 2D projection (flatten Z)
-    # since GeoJSON doesn't support 3D well
-    if extrude_height > 0:
-        # Extrude to create LOD1 box
-        from shapely.geometry import mapping
-        geom_2d = merged
-        # This would need proper extrusion — for now, use flat projection
-        logger.info(f"Extrusion not yet implemented, using flat projection")
-
-    # Create GeoJSON feature collection
+    # GeoJSON spec (RFC 7946) supports 3D coordinates natively
     feature = {
         "type": "Feature",
         "properties": {

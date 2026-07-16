@@ -168,6 +168,7 @@ class ExtractionResult:
     file_size_reduction: float = 0.0
     crs: str = "EPSG:4326"
     keep_interior: bool = False
+    simplify: bool = False
 
     def summary(self) -> str:
         lines = [
