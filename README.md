@@ -1,27 +1,27 @@
 # exterior-shell
 
-Extract lightweight 3D exterior shells from BIM models (IFC) for GIS visualization.
+Extract lightweight exterior shells from BIM models (IFC) for GIS and visualization workflows.
 
-`exterior-shell` reads an IFC file, classifies elements as exterior/interior using a rule-based engine, and outputs:
+`exterior-shell` reads an IFC file, classifies elements as exterior/interior using a rule-based engine, and produces:
 
-- **GeoPackage** (.gpkg) with GIS-native multipatch geometry, ready for ArcGIS, QGIS, or any spatial platform
 - **Stripped IFC** (.ifc) with interior elements removed, preserving a structurally valid IFC file
+- **2D Footprint** (.geojson) with base elevation, height, and area attributes for GIS extrusion
 
 Optional AI-assisted classification handles ambiguous elements (walls, columns, slabs) that rule-based logic alone can't resolve.
 
 ## Why
 
-BIM models contain everything: walls, windows, roofs, HVAC, furniture, pipes. When you need just the building envelope for a GIS deliverable, you're left with bad options:
+BIM models contain everything: walls, windows, roofs, HVAC, furniture, pipes. When you need just the building envelope, you're left with bad options:
 
-| Approach | GIS-native output | Stripped IFC | Cost |
+| Approach | Stripped IFC | GIS Footprint | Cost |
 |----------|:---:|:---:|:---:|
-| **exterior-shell** | ✅ GeoPackage | ✅ | Free |
-| ArcGIS Pro Building Layer | ❌ No standalone output (manual GDB export only) | ❌ | ArcGIS Pro license |
-| FME (IFC Connector) | ✅ Via translation | ❌ | $4K+/yr (station-based) |
-| IfcConvert `--exterior-only` | ❌ Mesh formats (OBJ, glTF) | ❌ | Free |
+| **exterior-shell** | ✅ | ✅ With elevation | Free |
+| ArcGIS Pro Building Layer | ❌ No standalone output | ❌ | ArcGIS Pro license |
+| FME (IFC Connector) | ❌ | Via translation | $4K+/yr |
+| IfcConvert `--exterior-only` | ❌ Mesh only | ❌ | Free |
 | Manual Revit/ArchiCAD cleanup | ❌ | ❌ | Hours per model |
 
-`exterior-shell` does one thing and gets it right: clean exterior shell, GIS-ready output, under 30 seconds.
+`exterior-shell` does one thing and gets it right: clean exterior shell, lightweight output, under 30 seconds.
 
 ## Install
 
@@ -40,38 +40,44 @@ pip install -e .
 ### Requirements
 
 - Python 3.10+
-- ifcopenshell, shapely, numpy, GDAL, click
+- ifcopenshell, shapely, numpy, click
 
 ## Usage
 
-### Extract exterior shell to GeoPackage
+### Extract exterior shell (default)
+
+Produces a stripped IFC file with interior elements removed:
 
 ```bash
 exterior-shell extract building.ifc
-# Output: building_shell.gpkg + building_shell.report.md
+# Output: building_stripped.ifc + building.report.md
 ```
 
-### Extract with stripped IFC output
+### Extract with 2D footprint
 
 ```bash
-exterior-shell extract building.ifc --stripped-ifc
-# Output: building_shell.gpkg + building_stripped.ifc
+exterior-shell extract building.ifc --footprint
+# Output: building_stripped.ifc + building_footprint.geojson + building.report.md
 ```
 
-### GeoJSON output with AI classification
+The footprint GeoJSON includes `base_elevation`, `height`, `min_elevation`, `max_elevation`, and `area` properties. Load it in ArcGIS Pro or QGIS and extrude by the `height` attribute, or use it directly in web maps (MapLibre, CesiumJS).
+
+### Stripped IFC only (no GIS output)
 
 ```bash
-exterior-shell extract building.ifc -f geojson --ai
+exterior-shell extract building.ifc --no-stripped-ifc --footprint
+# Output: building_footprint.geojson only
 ```
 
 ### Other options
 
 ```bash
-exterior-shell extract building.ifc --crs EPSG:3857      # Output in Web Mercator
-exterior-shell extract building.ifc --keep-interior       # Include interior-facing faces
-exterior-shell extract building.ifc --simplify            # Merge coplanar faces, filter tiny triangles
-exterior-shell extract building.ifc --json-stats          # Machine-readable output
-exterior-shell info building.ifc                          # Inspect IFC file
+exterior-shell extract building.ifc --ai                # AI-assisted classification
+exterior-shell extract building.ifc --crs EPSG:3857     # Footprint in Web Mercator
+exterior-shell extract building.ifc --keep-interior      # Include interior-facing faces
+exterior-shell extract building.ifc --no-report          # Skip report generation
+exterior-shell extract building.ifc --json-stats         # Machine-readable output
+exterior-shell info building.ifc                         # Inspect IFC file
 ```
 
 ## How It Works
@@ -85,17 +91,12 @@ IFC File
   │   │
   │   └─ [--ai] Vision model reclassifies ambiguous elements from rendered views
   │
-      ├─ Assemble ─ Merge exterior faces, remove hidden interior-facing geometry
-      │
-      ├─ [--simplify] ─ Filter tiny faces, merge coplanar triangles
-      │
-      └─ Export
-      ├─ GeoPackage (.gpkg) ─ GIS-native multipatch with 3D coordinates
-      │   ├─ shell layer ─ merged exterior shell
-      │   ├─ faces layer ─ individual triangular faces with metadata
-      │   └─ elements layer ─ element summary (attribute-only table)
-      ├─ GeoJSON (.geojson) ─ extruded polygons for lightweight visualization
-      └─ Stripped IFC (.ifc) ─ structurally valid IFC with interiors removed
+  ├─ Assemble ─ Merge exterior faces, remove hidden interior-facing geometry
+  │
+  └─ Export
+      ├─ Stripped IFC (.ifc) ─ structurally valid IFC with interiors removed
+      ├─ Footprint (.geojson) ─ 2D outline with base_elevation and height
+      └─ Report (.md) ─ extraction summary with element counts
 ```
 
 ### Classification Rules
@@ -110,10 +111,10 @@ IFC File
 
 Tested on real-world IFC models:
 
-| Model | Elements | Extraction Time | GeoPackage Size | Size Reduction |
-|-------|----------|----------------|----------------|---------------|
-| Test house | 14 | <2s | 3.5 KB | 78.7% |
-| Office building | 1,190 | <8s | 789 KB | 21.3% (geometry), 33.2% (stripped IFC) |
+| Model | Elements | Extraction Time | Stripped IFC Size | Size Reduction |
+|-------|----------|----------------|-------------------|---------------|
+| Test house | 14 | <2s | ~200 KB | ~78% |
+| Office building | 1,190 | ~26s | 7,036 KB | 33.2% |
 
 ## Development
 
@@ -130,22 +131,21 @@ exterior_shell/
 ├── core/
 │   ├── parser.py       # IFC parsing with ifcopenshell
 │   ├── classifier.py   # Rule-based classification engine
-│   ├── assembler.py    # Geometry assembly + multipatch creation
-│   ├── simplifier.py   # Coplanar merge, tiny-face filtering
+│   ├── assembler.py    # Geometry assembly + face deduplication
 │   └── models.py       # Data classes (Element, Classification, Shell)
 ├── ai/
 │   └── ...             # Vision model classification (Phase 2)
 ├── export/
-│   ├── geopackage.py   # GeoPackage + GeoJSON export (3D, attribute tables)
-│   └── stripped_ifc.py # Stripped IFC export
+│   ├── stripped_ifc.py # Stripped IFC export (remove interior elements)
+│   └── footprint.py    # 2D footprint GeoJSON with elevation attributes
 └── utils/
     └── ...             # Geometry helpers, I/O utilities
 ```
 
 ## Roadmap
 
-- **v1.0** (current) - Rule-based extraction, GeoPackage/GeoJSON/Stripped IFC export
-- **v1.1** - AI-assisted classification for ambiguous elements (multi-view rendering + vision API)
+- **v1.2** (current) - Stripped IFC + 2D footprint output, rule-based extraction
+- **v1.3** - AI-assisted classification for ambiguous elements (multi-view rendering + vision API)
 - **v2.0** - Revit direct integration (.rvt), 3D Tiles export, LOD generation
 
 ## License
@@ -154,6 +154,10 @@ MIT
 
 ## Acknowledgments
 
-Built with [ifcopenshell](https://github.com/IfcOpenShell/IfcOpenShell), [Shapely](https://shapely.readthedocs.io/), and [GDAL](https://gdal.org/).
+Built with [ifcopenshell](https://github.com/IfcOpenShell/IfcOpenShell) and [Shapely](https://shapely.readthedocs.io/).
 
 Inspired by the daily pain of infrastructure GIS teams who spend hours cleaning BIM models they shouldn't have to clean.
+
+## Trademarks
+
+ArcGIS is a registered trademark of Esri. This project is not affiliated with or endorsed by Esri.

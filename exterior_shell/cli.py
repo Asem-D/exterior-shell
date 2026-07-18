@@ -14,9 +14,8 @@ from . import __version__
 from .core.parser import parse_ifc
 from .core.classifier import classify_all, resolve_ambiguities
 from .core.assembler import assemble_shell, get_shell_stats
-from .core.simplifier import simplify_shell
-from .export.geopackage import export_geopackage, write_extraction_report
 from .export.stripped_ifc import export_stripped_ifc
+from .export.footprint import export_footprint_geojson, write_extraction_report
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -32,10 +31,10 @@ def _setup_logging(verbose: bool) -> None:
 @click.group()
 @click.version_option(__version__, prog_name="exterior-shell")
 def main():
-    """Extract lightweight exterior shells from BIM models for GIS visualization.
+    """Extract lightweight exterior shells from BIM models (IFC).
 
-    Converts IFC files to GeoPackage layers suitable for ArcGIS and other
-    GIS platforms.
+    Produces a stripped IFC (interior elements removed) and optionally a
+    2D building footprint with elevation attributes for GIS use.
     """
     pass
 
@@ -43,16 +42,10 @@ def main():
 @main.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option(
-    "-o", "--output", "output_file",
-    type=click.Path(),
+    "-o", "--output", "output_dir",
+    type=click.Path(file_okay=False),
     default=None,
-    help="Output file path (.gpkg or .geojson). Defaults to input name + _shell.gpkg",
-)
-@click.option(
-    "-f", "--format", "output_format",
-    type=click.Choice(["gpkg", "geojson"]),
-    default="gpkg",
-    help="Output format (default: gpkg)",
+    help="Output directory. Defaults to same directory as input file.",
 )
 @click.option(
     "--ai",
@@ -80,7 +73,7 @@ def main():
 @click.option(
     "--crs",
     default="EPSG:4326",
-    help="Output coordinate reference system (default: EPSG:4326)",
+    help="Output coordinate reference system for footprint (default: EPSG:4326)",
     show_default=True,
 )
 @click.option(
@@ -90,10 +83,16 @@ def main():
     help="Keep interior-facing faces in the shell",
 )
 @click.option(
-    "--stripped-ifc",
+    "--no-stripped-ifc",
     is_flag=True,
     default=False,
-    help="Also export a stripped IFC file with interior elements removed",
+    help="Skip stripped IFC export (only useful with --footprint)",
+)
+@click.option(
+    "--footprint",
+    is_flag=True,
+    default=False,
+    help="Also export a 2D building footprint GeoJSON with elevation attributes",
 )
 @click.option(
     "--json-stats",
@@ -101,16 +100,9 @@ def main():
     default=False,
     help="Output stats as JSON to stdout",
 )
-@click.option(
-    "--simplify",
-    is_flag=True,
-    default=False,
-    help="Merge coplanar triangles and remove tiny faces",
-)
 def extract(
     input_file: str,
-    output_file: str | None,
-    output_format: str,
+    output_dir: str | None,
     ai: bool,
     no_filter: bool,
     report: bool,
@@ -118,27 +110,31 @@ def extract(
     json_stats: bool,
     crs: str,
     keep_interior: bool,
-    stripped_ifc: bool,
-    simplify: bool,
+    no_stripped_ifc: bool,
+    footprint: bool,
 ):
     """Extract exterior shell from an IFC file.
 
     \b
     Examples:
         exterior-shell extract building.ifc
-        exterior-shell extract building.ifc -o shell.gpkg
-        exterior-shell extract building.ifc -f geojson --ai
-        exterior-shell extract building.ifc --stripped-ifc
+        exterior-shell extract building.ifc -o /output/
+        exterior-shell extract building.ifc --footprint
+        exterior-shell extract building.ifc --footprint --no-stripped-ifc
+        exterior-shell extract building.ifc --footprint --crs EPSG:3857
     """
     _setup_logging(verbose)
     logger = logging.getLogger("exterior_shell.cli")
 
     input_path = Path(input_file)
+    stem = input_path.stem
 
-    # Determine output path
-    if output_file is None:
-        output_file = str(input_path.with_suffix("")) + f"_shell.{output_format}"
-    output_path = Path(output_file)
+    # Determine output directory
+    if output_dir is not None:
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = input_path.parent
 
     # Track timing
     start_time = time.time()
@@ -149,14 +145,12 @@ def extract(
     click.echo(f"  Found {len(elements)} elements", err=True)
 
     # ── Step 2: Filter / Classify ──────────────────────────────────────
+    report_data = None
     if no_filter:
         click.echo("Skipping classification (--no-filter)", err=True)
-        # All elements treated as exterior
         from .core.models import Classification
         for e in elements:
             e.classification = Classification.EXTERIOR
-        exterior_elements = elements
-        report_data = None
     else:
         click.echo("Classifying elements...", err=True)
         report_data = classify_all(elements)
@@ -174,9 +168,11 @@ def extract(
             f"{report_data.interior_count} interior",
             err=True,
         )
-        exterior_elements = report_data.exterior_elements
 
     # ── Step 3: Assemble ──────────────────────────────────────────────
+    exterior_elements = (
+        report_data.exterior_elements if report_data else elements
+    )
     if keep_interior:
         click.echo("Assembling shell geometry (keeping interior faces)...", err=True)
     else:
@@ -192,63 +188,19 @@ def extract(
         err=True,
     )
 
-    # ── Step 4: Simplify ─────────────────────────────────────────────
-    if simplify:
-        before = shell.total_face_count
-        shell.faces = simplify_shell(
-            shell.faces,
-            min_area=1e-6,
-            angle_threshold=0.01,
-        )
-        shell.total_face_count = len(shell.faces)
-        click.echo(
-            f"Simplified: {before} -> {shell.total_face_count} faces",
-            err=True,
-        )
-
-    # ── Step 5: Export ────────────────────────────────────────────────
-    click.echo(f"Exporting to {output_path}...", err=True)
-
-    if output_format == "geojson":
-        from .export.geopackage import export_geojson
-        result = export_geojson(
-            shell=shell,
-            report=report_data or type('obj', (object,), {'total_elements': len(elements), 'exterior_count': len(elements), 'interior_count': 0, 'ambiguous_count': 0, 'ambiguous_elements': [], 'exterior_elements': [], 'interior_elements': [], 'ambiguity_score': 0.0, 'summary': lambda self: "No classification"})(),
-            output_path=output_path,
-            input_file=str(input_path),
-            crs=crs,
-        )
-    else:
-        result = export_geopackage(
-            shell=shell,
-            report=report_data,
-            output_path=output_path,
-            input_file=str(input_path),
-            crs=crs,
-        )
-
-    # Store CRS, keep_interior, and simplify in result for JSON output
-    result.crs = crs
-    result.keep_interior = keep_interior
-    result.simplify = simplify
-
-    # ── Step 6: Report ───────────────────────────────────────────────
-    elapsed = time.time() - start_time
-
-    if report and report_data:
-        report_path = output_path.with_suffix(".report.md")
-        write_extraction_report(result, report_path)
-        click.echo(f"Report written to {report_path}", err=True)
-
-    # ── Step 6b: Stripped IFC Export ─────────────────────────────────
+    # ── Step 4: Stripped IFC Export ───────────────────────────────────
     stripped_result = None
-    if stripped_ifc and report_data:
-        stripped_output = output_path.with_name(
-            output_path.stem.replace("_shell", "") + "_stripped.ifc"
-        )
+    if not no_stripped_ifc:
+        stripped_output = out_dir / f"{stem}_stripped.ifc"
         click.echo(f"Exporting stripped IFC to {stripped_output}...", err=True)
         try:
-            all_elements = report_data.exterior_elements + report_data.interior_elements + report_data.ambiguous_elements
+            all_elements = elements
+            if report_data:
+                all_elements = (
+                    report_data.exterior_elements
+                    + report_data.interior_elements
+                    + report_data.ambiguous_elements
+                )
             stripped_result = export_stripped_ifc(
                 input_path=input_path,
                 output_path=stripped_output,
@@ -266,21 +218,98 @@ def extract(
             )
         except Exception as exc:
             click.echo(f"  Stripped IFC export failed: {exc}", err=True)
+    else:
+        click.echo("Skipping stripped IFC (--no-stripped-ifc)", err=True)
 
-    # File sizes
+    # ── Step 5: Footprint Export ──────────────────────────────────────
+    footprint_data = None
+    footprint_path = None
+    if footprint:
+        footprint_path = out_dir / f"{stem}_footprint.geojson"
+        click.echo(f"Exporting 2D footprint to {footprint_path}...", err=True)
+        try:
+            footprint_data = export_footprint_geojson(
+                shell=shell,
+                output_path=footprint_path,
+                crs=crs,
+            )
+            if footprint_data:
+                click.echo(
+                    f"  base_elevation: {footprint_data['base_elevation']}, "
+                    f"height: {footprint_data['height']}, "
+                    f"area: {footprint_data['area']:.1f} sq units",
+                    err=True,
+                )
+            else:
+                click.echo("  No valid footprint geometry found", err=True)
+        except Exception as exc:
+            click.echo(f"  Footprint export failed: {exc}", err=True)
+
+    # ── Step 6: Report ───────────────────────────────────────────────
+    elapsed = time.time() - start_time
     input_size = input_path.stat().st_size
-    output_size = output_path.stat().st_size if output_path.exists() else 0
-    if input_size > 0:
-        result.file_size_reduction = (1 - output_size / input_size) * 100
 
-    # Summary
+    # Build result for summary and report
+    from .core.models import ExtractionResult
+    placeholder_report = report_data or type('obj', (object,), {
+        'total_elements': len(elements),
+        'exterior_count': len(elements),
+        'interior_count': 0,
+        'ambiguous_count': 0,
+        'ambiguous_elements': [],
+        'exterior_elements': [],
+        'interior_elements': [],
+        'ambiguity_score': 0.0,
+        'summary': lambda self: "No classification",
+    })()
+
+    result = ExtractionResult(
+        classification_report=placeholder_report,
+        shell=shell,
+        input_file=str(input_path),
+        output_file=str(stripped_output if stripped_result else (footprint_path or "")),
+        input_element_count=len(elements),
+        output_face_count=stats['face_count'],
+    )
+
+    if report and report_data:
+        report_path = out_dir / f"{stem}.report.md"
+        write_extraction_report(result, report_path)
+        click.echo(f"Report written to {report_path}", err=True)
+
+    # ── Summary ──────────────────────────────────────────────────────
+    # File sizes
+    stripped_size = (
+        stripped_output.stat().st_size
+        if stripped_result and stripped_output.exists()
+        else 0
+    )
+    footprint_size = (
+        footprint_path.stat().st_size
+        if footprint_path and footprint_path.exists()
+        else 0
+    )
+
     click.echo("", err=True)
     click.echo(f"Done in {elapsed:.1f}s", err=True)
     click.echo(f"Input:  {input_size / 1024:.1f} KB ({input_file})", err=True)
-    click.echo(f"Output: {output_size / 1024:.1f} KB ({output_path.name})", err=True)
-    click.echo(f"Reduction: {result.file_size_reduction:.1f}%", err=True)
+    if stripped_result:
+        click.echo(
+            f"Stripped IFC: {stripped_size / 1024:.1f} KB "
+            f"({stripped_output.name})",
+            err=True,
+        )
+        click.echo(
+            f"  Reduction: {stripped_result['size_reduction_pct']:.1f}%",
+            err=True,
+        )
+    if footprint_data and footprint_path:
+        click.echo(
+            f"Footprint:  {footprint_size / 1024:.1f} KB "
+            f"({footprint_path.name})",
+            err=True,
+        )
 
-    # Print summary
     click.echo("", err=True)
     click.echo(result.summary())
 
@@ -288,19 +317,20 @@ def extract(
     if json_stats:
         stats_output = {
             "input_file": str(input_path),
-            "output_file": str(output_path),
             "input_size_kb": input_size / 1024,
-            "output_size_kb": output_size / 1024,
-            "crs": crs,
-            "keep_interior": keep_interior,
             "elements": {
-                "total": result.input_element_count,
-                "exterior": result.classification_report.exterior_count if report_data else len(elements),
-                "interior": result.classification_report.interior_count if report_data else 0,
-                "ambiguous": result.classification_report.ambiguous_count if report_data else 0,
+                "total": len(elements),
+                "exterior": (
+                    report_data.exterior_count if report_data else len(elements)
+                ),
+                "interior": report_data.interior_count if report_data else 0,
+                "ambiguous": (
+                    report_data.ambiguous_count if report_data else 0
+                ),
             },
-            "geometry": stats,
+            "shell": stats,
             "stripped_ifc": stripped_result,
+            "footprint": {k: v for k, v in footprint_data.items() if k != "polygon"} if footprint_data else None,
             "elapsed_seconds": round(elapsed, 2),
         }
         click.echo(json.dumps(stats_output, indent=2))

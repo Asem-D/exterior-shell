@@ -12,58 +12,126 @@ FIXTURE = Path(__file__).parent / "fixtures" / "test_building.ifc"
 
 
 def test_extract_default(tmp_path: Path):
-    """Default extract produces a GPKG with shell + faces layers."""
-    out = tmp_path / "out.gpkg"
+    """Default extract produces a stripped IFC file."""
     runner = CliRunner()
-    result = runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out)])
+    result = runner.invoke(main, ["extract", str(FIXTURE), "-o", str(tmp_path)])
     assert result.exit_code == 0
-    assert out.exists()
+    stripped = tmp_path / "test_building_stripped.ifc"
+    assert stripped.exists()
+    assert stripped.stat().st_size > 0
 
 
-def test_extract_crs(tmp_path: Path):
-    """--crs flag is accepted and written to GPKG."""
-    out = tmp_path / "out.gpkg"
+def test_extract_footprint(tmp_path: Path):
+    """--footprint flag produces a GeoJSON footprint file."""
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract", str(FIXTURE), "-o", str(out),
-        "--crs", "EPSG:3857",
-    ])
-    assert result.exit_code == 0
-    # Check CRS in GPKG metadata
-    import sqlite3
-    conn = sqlite3.connect(str(out))
-    cursor = conn.execute(
-        "SELECT organization_coordsys_id FROM gpkg_spatial_ref_sys"
+    result = runner.invoke(
+        main, ["extract", str(FIXTURE), "-o", str(tmp_path), "--footprint"]
     )
-    ids = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    assert 3857 in ids
+    assert result.exit_code == 0
+    footprint = tmp_path / "test_building_footprint.geojson"
+    assert footprint.exists()
+
+    import json
+    data = json.loads(footprint.read_text(encoding="utf-8"))
+    assert data["type"] == "FeatureCollection"
+    assert len(data["features"]) == 1
+
+    props = data["features"][0]["properties"]
+    assert "base_elevation" in props
+    assert "height" in props
+    assert "area" in props
+
+
+def test_extract_footprint_crs(tmp_path: Path):
+    """--crs flag is accepted for footprint export."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path),
+         "--footprint", "--crs", "EPSG:3857"],
+    )
+    assert result.exit_code == 0
+    footprint = tmp_path / "test_building_footprint.geojson"
+    assert footprint.exists()
+
+    import json
+    data = json.loads(footprint.read_text(encoding="utf-8"))
+    assert "3857" in data["crs"]["properties"]["name"]
 
 
 def test_extract_keep_interior(tmp_path: Path):
-    """--keep-interior flag is accepted and changes face count."""
-    out_normal = tmp_path / "normal.gpkg"
-    out_keep = tmp_path / "keep.gpkg"
+    """--keep-interior flag is accepted and runs without error."""
     runner = CliRunner()
-
-    runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out_normal)])
-    runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out_keep), "--keep-interior"])
-
-    # Both should produce valid output
-    assert out_normal.exists()
-    assert out_keep.exists()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path), "--keep-interior"],
+    )
+    assert result.exit_code == 0
+    stripped = tmp_path / "test_building_stripped.ifc"
+    assert stripped.exists()
 
 
 def test_extract_no_report(tmp_path: Path):
     """--no-report suppresses report file."""
-    out = tmp_path / "out.gpkg"
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract", str(FIXTURE), "-o", str(out), "--no-report",
-    ])
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path), "--no-report"],
+    )
     assert result.exit_code == 0
-    report = tmp_path / "out.report.md"
+    report = tmp_path / "test_building.report.md"
     assert not report.exists()
+
+
+def test_extract_no_stripped_ifc(tmp_path: Path):
+    """--no-stripped-ifc skips IFC output."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path), "--no-stripped-ifc"],
+    )
+    assert result.exit_code == 0
+    stripped = tmp_path / "test_building_stripped.ifc"
+    assert not stripped.exists()
+
+
+def test_extract_no_stripped_ifc_with_footprint(tmp_path: Path):
+    """--no-stripped-ifc --footprint produces only the footprint."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path),
+         "--no-stripped-ifc", "--footprint"],
+    )
+    assert result.exit_code == 0
+    assert not (tmp_path / "test_building_stripped.ifc").exists()
+    assert (tmp_path / "test_building_footprint.geojson").exists()
+
+
+def test_extract_json_stats(tmp_path: Path):
+    """--json-stats outputs JSON to stdout."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path), "--json-stats"],
+    )
+    assert result.exit_code == 0
+    assert '"elements"' in result.output
+    assert '"shell"' in result.output
+    assert '"stripped_ifc"' in result.output
+
+
+def test_extract_json_stats_with_footprint(tmp_path: Path):
+    """--json-stats with --footprint includes footprint in JSON."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path),
+         "--footprint", "--json-stats"],
+    )
+    assert result.exit_code == 0
+    assert '"footprint"' in result.output
+    assert '"base_elevation"' in result.output
 
 
 def test_info():
@@ -75,98 +143,14 @@ def test_info():
     assert "Total faces:" in result.output
 
 
-def test_extract_geojson(tmp_path: Path):
-    """GeoJSON format produces valid output."""
-    out = tmp_path / "out.geojson"
+def test_extract_both_outputs(tmp_path: Path):
+    """Default extract with --footprint produces both stripped IFC and footprint."""
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract", str(FIXTURE), "-o", str(out), "-f", "geojson",
-    ])
-    assert result.exit_code == 0
-    assert out.exists()
-
-    import json
-    data = json.loads(out.read_text())
-    assert data["type"] == "FeatureCollection"
-    assert len(data["features"]) == 1
-
-
-def test_extract_json_stats(tmp_path: Path):
-    """--json-stats outputs JSON to stdout."""
-    out = tmp_path / "out.gpkg"
-    runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract", str(FIXTURE), "-o", str(out), "--json-stats",
-    ])
-    assert result.exit_code == 0
-    # JSON should be in the output
-    assert '"crs"' in result.output
-    assert '"keep_interior"' in result.output
-    assert '"geometry"' in result.output
-
-
-def test_extract_simplify(tmp_path: Path):
-    """--simplify flag is accepted and changes face count."""
-    out_normal = tmp_path / "normal.gpkg"
-    out_simplified = tmp_path / "simplified.gpkg"
-    runner = CliRunner()
-
-    runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out_normal)])
-    runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out_simplified), "--simplify"])
-
-    # Both should produce valid output
-    assert out_normal.exists()
-    assert out_simplified.exists()
-
-    # Check face counts differ
-    import sqlite3
-    normal_faces = _count_gpkg_features(out_normal, "faces")
-    simplified_faces = _count_gpkg_features(out_simplified, "faces")
-    # Simplification should reduce or maintain face count
-    assert simplified_faces <= normal_faces
-
-
-def test_extract_gpkg_elements_layer(tmp_path: Path):
-    """GPKG output includes elements layer as attribute-only table."""
-    out = tmp_path / "out.gpkg"
-    runner = CliRunner()
-    result = runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out)])
-    assert result.exit_code == 0
-    assert out.exists()
-
-    # Verify elements layer exists and has records
-    import sqlite3
-    conn = sqlite3.connect(str(out))
-    cursor = conn.execute("SELECT COUNT(*) FROM elements")
-    count = cursor.fetchone()[0]
-    conn.close()
-    assert count >= 1
-
-
-def test_extract_gpkg_layers(tmp_path: Path):
-    """GPKG output contains shell, faces, and elements layers."""
-    out = tmp_path / "out.gpkg"
-    runner = CliRunner()
-    result = runner.invoke(main, ["extract", str(FIXTURE), "-o", str(out)])
-    assert result.exit_code == 0
-
-    import sqlite3
-    conn = sqlite3.connect(str(out))
-    cursor = conn.execute(
-        "SELECT table_name FROM gpkg_contents ORDER BY table_name"
+    result = runner.invoke(
+        main, ["extract", str(FIXTURE), "-o", str(tmp_path), "--footprint"]
     )
-    layers = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    assert "shell" in layers
-    assert "faces" in layers
-    assert "elements" in layers
-
-
-def _count_gpkg_features(gpkg_path: Path, layer: str) -> int:
-    """Count features in a GPKG layer."""
-    import sqlite3
-    conn = sqlite3.connect(str(gpkg_path))
-    cursor = conn.execute(f"SELECT COUNT(*) FROM [{layer}]")
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+    assert result.exit_code == 0
+    stripped = tmp_path / "test_building_stripped.ifc"
+    footprint = tmp_path / "test_building_footprint.geojson"
+    assert stripped.exists()
+    assert footprint.exists()

@@ -110,6 +110,7 @@ There is no lightweight, affordable, purpose-built tool that converts BIM exteri
 | GeoPackage (.gpkg) with multipatch geometry | MVP | P0 |
 | Stripped IFC (.ifc) with exterior elements only | MVP | P0 |
 | GeoJSON (.geojson) with extruded polygons | MVP | P1 |
+| GeoJSON (.geojson) with per-floor footprints (`--floor-footprints`) | MVP | P1 |
 | 3D Tiles (.3dtiles) | Phase 3 | P2 |
 | Shapefile (.shp) with extruded polygons | Phase 2 | P2 |
 
@@ -125,7 +126,8 @@ There is no lightweight, affordable, purpose-built tool that converts BIM exteri
 | **GeoPackage Export** | Write multipatch to GeoPackage with attributes | Includes element_type, element_id, phase; spatial reference WGS84 + project CRS |
 | **Stripped IFC Export** | Write a clean IFC file containing only exterior elements | Clone original IFC, remove interior elements, strip orphaned relationships (materials, containment); output is structurally valid IFC2x3/IFC4 |
 | **Ambiguity Report** | Count and list ambiguous elements, suggest AI mode | Report: total elements, confirmed exterior, confirmed interior, ambiguous; ambiguity score as % |
-| **CLI Interface** | Command-line tool for batch processing | `exterior-shell extract input.ifc -o output.gpkg [--stripped-ifc] [--ai]` |
+| **Per-Floor Footprints** | Opt-in `--floor-footprints` flag: group exterior slabs by Z elevation into per-polygon footprints with `base_elevation`, `height`, `area`, `element_type`, and `floor_number` attributes | Output: GeoJSON FeatureCollection. Clusters slabs by Z tolerance. Tags canopies, balconies, overhangs as distinct elements. Useful for GIS 3D extrusion workflows. |
+| **CLI Interface** | Command-line tool for batch processing | `exterior-shell extract input.ifc -o output.gpkg [--stripped-ifc] [--floor-footprints] [--ai]` |
 
 #### Phase 2: AI-Enhanced Extraction
 
@@ -262,6 +264,7 @@ exterior-shell/
 │   │   ├── geopackage.py       # GeoPackage/multipatch export
 │   │   ├── stripped_ifc.py     # Stripped IFC export (exterior only)
 │   │   ├── geojson.py          # GeoJSON with extruded polygons
+│   │   ├── floor_footprints.py # Per-floor footprint exporter (opt-in)
 │   │   └── report.py           # Extraction report generation
 │   └── utils/
 │       ├── __init__.py

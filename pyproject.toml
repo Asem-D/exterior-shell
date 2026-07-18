@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "exterior-shell"
-version = "1.0.0"
-description = "Extract lightweight 3D exterior shells from BIM models (IFC) for GIS visualization. Outputs GeoPackage, GeoJSON, and stripped IFC."
+version = "1.2.0"
+description = "Extract lightweight exterior shells from BIM models (IFC). Produces stripped IFC and 2D footprints with elevation for GIS use."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Asem Daaboul", email = "asem.daaboul@gmail.com" },
 ]
-keywords = ["bim", "ifc", "gis", "geopackage", "exterior-shell", "building-envelope", "3d", "ifcopenshell"]
+keywords = ["bim", "ifc", "gis", "exterior-shell", "building-envelope", "ifcopenshell", "footprint"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -35,7 +35,6 @@ dependencies = [
     "shapely>=2.0",
     "numpy>=1.24",
     "click>=8.0",
-    "geopandas>=0.14",
 ]
 
 [project.optional-dependencies]
