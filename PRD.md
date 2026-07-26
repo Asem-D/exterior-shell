@@ -1,25 +1,26 @@
 # Product Requirements Document: BIM Exterior Shell Extractor
 
-> **Version**: 0.1 (Draft)
-> **Date**: 2026-07-10
+> **Version**: 1.2.0
+> **Date**: 2026-07-18
 > **Author**: Asem Daaboul
-> **Status**: Concept Approved, Pre-Implementation
+> **Status**: MVP Released (v1.2.0)
 
 ---
 
 ## 1. Product Overview
 
-**Working Name**: ExteriorAI (working title, TBD)
+**Product Name**: exterior-shell
 
-**One-liner**: Extract lightweight 3D exterior shells from BIM models for GIS visualization.
+**One-liner**: Extract lightweight exterior shells from BIM models (IFC) for GIS and visualization workflows.
 
-**What it does**: Takes an IFC or Revit model as input, identifies and extracts only the exterior building envelope (walls, windows, doors, roofs, canopies), and outputs a lightweight GIS-ready multipatch geometry. Optionally uses AI vision models to improve classification accuracy on messy, early-stage models.
+**What it does**: Takes an IFC file as input, classifies elements as exterior/interior using a rule-based engine, and produces a structurally valid stripped IFC (default) plus an optional 2D footprint GeoJSON with elevation attributes. Optionally uses AI vision models to improve classification accuracy on messy, early-stage models.
 
 **What it is NOT**:
 - Not a full BIM-to-GIS conversion tool (that's FME, ArcGIS Pro)
 - Not a 3D reconstruction tool (not generating geometry from photos)
 - Not a BIM authoring tool
-- It does ONE thing: produce a clean, lightweight exterior shell from BIM data
+- Not a CityJSON/STEP/OBJ generator (that's IfcEnvelopeExtractor)
+- It does ONE thing: produce a clean, lightweight exterior shell from BIM data for GIS practitioners who receive IFC files they didn't ask for
 
 ---
 
@@ -27,7 +28,7 @@
 
 ### The Pain
 
-Infrastructure consultancies producing 3D GIS deliverables for clients face a recurring problem:
+GIS teams in infrastructure consultancies don't ask for BIM models. They receive them. Architecture practices export IFC files and hand them off, and the GIS analyst is left with a 500MB model full of pipes, HVAC, and furniture when they need just the building envelope for a web map or spatial analysis.
 
 | Scenario | What happens today | Cost |
 |---|---|---|
@@ -41,13 +42,14 @@ Infrastructure consultancies producing 3D GIS deliverables for clients face a re
 1. **No standard tool exists** to extract just the exterior shell from BIM for GIS use cases
 2. **Esri's ExteriorShell** (ArcGIS Pro) is unreliable: misses roofs, ground floors, includes interior junk, many Revit files fall back to degraded "Fallback Shell"
 3. **BIM models are messy**, especially at early project stages when GIS visualization is most needed (planning, design review, public consultation)
-4. **FME can solve it** but costs $10K+/year per seat, overkill for this one task
+4. **FME can solve it** but costs ~$4,200/year per seat, overkill for this one task
 
 ### Market Gap
 
 There is no lightweight, affordable, purpose-built tool that converts BIM exterior shells to GIS-ready formats. The alternatives are:
 
 - **Esri ExteriorShell**: Free but broken
+- **IfcEnvelopeExtractor (TU Delft)**: Academic-grade, outputs CityJSON/STEP/OBJ with full LoD coverage. Different output ecosystem, not directly compatible with ArcGIS/web map workflows
 - **FME**: Works but expensive and generalist
 - **Manual cleanup**: Slow, error-prone, doesn't scale
 - **Custom scripts per project**: No reusability, no UI
@@ -89,7 +91,9 @@ There is no lightweight, affordable, purpose-built tool that converts BIM exteri
 > "See the real building exterior on your map, not a crude box extrusion."
 
 ### For the Industry
-> "Bridge the BIM-GIS gap for exterior visualization. No other tool does this reliably."
+> "When a GIS team receives a BIM model they didn't ask for, exterior-shell gives them a clean entry point. Not about merging BIM and GIS. About solving one specific problem well."
+
+**Note on BIM-GIS convergence**: The industry narrative often oversells BIM-GIS integration. In practice, GIS workstreams and BIM workstreams are fundamentally different with different tools and display requirements. The more common need is bringing GIS context (terrain, utilities, roads, OSM) INTO BIM, not the reverse. exterior-shell exists for the narrower case where GIS practitioners receive BIM data and need a clean envelope for spatial analysis, web maps, or ArcGIS Pro visualization.
 
 ---
 
@@ -107,12 +111,10 @@ There is no lightweight, affordable, purpose-built tool that converts BIM exteri
 
 | Format | Phase | Priority |
 |---|---|---|
-| GeoPackage (.gpkg) with multipatch geometry | MVP | P0 |
-| Stripped IFC (.ifc) with exterior elements only | MVP | P0 |
-| GeoJSON (.geojson) with extruded polygons | MVP | P1 |
-| GeoJSON (.geojson) with per-floor footprints (`--floor-footprints`) | MVP | P1 |
+| Stripped IFC (.ifc) with exterior elements only | MVP (v1.2.0) | P0 — default output |
+| 2D Footprint (.geojson) with base_elevation, height, area | MVP (v1.2.0) | P0 — opt-in via `--footprint` |
 | 3D Tiles (.3dtiles) | Phase 3 | P2 |
-| Shapefile (.shp) with extruded polygons | Phase 2 | P2 |
+| Per-floor footprints (`--floor-footprints`) | Future | P1 |
 
 ### 5.3 Core Features
 
@@ -123,11 +125,10 @@ There is no lightweight, affordable, purpose-built tool that converts BIM exteri
 | **IFC Parsing** | Read IFC files, extract geometry and element metadata | Handles IFC2x3 and IFC4; extracts element types, geometry, spatial hierarchy |
 | **Rule-Based Classification** | Classify elements as exterior/interior based on IFC type | IfcRoof → exterior; IfcWindow/IfcDoor → exterior; IfcSpace/IfcFurnishing → interior; IfcWall → ambiguous |
 | **Exterior Geometry Assembly** | Combine confirmed-exterior elements into single multipatch | Single multipatch geometry per building; no interior faces visible; correct face normals |
-| **GeoPackage Export** | Write multipatch to GeoPackage with attributes | Includes element_type, element_id, phase; spatial reference WGS84 + project CRS |
-| **Stripped IFC Export** | Write a clean IFC file containing only exterior elements | Clone original IFC, remove interior elements, strip orphaned relationships (materials, containment); output is structurally valid IFC2x3/IFC4 |
+| **Stripped IFC Export** (default) | Write a clean IFC file containing only exterior elements | Clone original IFC, remove interior elements, strip orphaned relationships (materials, containment); output is structurally valid IFC2x3/IFC4. Always produced unless `--no-stripped-ifc` |
+| **2D Footprint Export** (opt-in) | Project exterior faces to XY plane, union into outline polygon | Output: GeoJSON FeatureCollection with `base_elevation`, `height`, `min_elevation`, `max_elevation`, `area` properties. Activated via `--footprint` flag. |
 | **Ambiguity Report** | Count and list ambiguous elements, suggest AI mode | Report: total elements, confirmed exterior, confirmed interior, ambiguous; ambiguity score as % |
-| **Per-Floor Footprints** | Opt-in `--floor-footprints` flag: group exterior slabs by Z elevation into per-polygon footprints with `base_elevation`, `height`, `area`, `element_type`, and `floor_number` attributes | Output: GeoJSON FeatureCollection. Clusters slabs by Z tolerance. Tags canopies, balconies, overhangs as distinct elements. Useful for GIS 3D extrusion workflows. |
-| **CLI Interface** | Command-line tool for batch processing | `exterior-shell extract input.ifc -o output.gpkg [--stripped-ifc] [--floor-footprints] [--ai]` |
+| **CLI Interface** | Command-line tool for extraction | `exterior-shell extract input.ifc [--footprint] [--no-stripped-ifc] [--ai] [--crs EPSG:3857] [--json-stats] [--report/--no-report]` |
 
 #### Phase 2: AI-Enhanced Extraction
 
@@ -140,7 +141,16 @@ There is no lightweight, affordable, purpose-built tool that converts BIM exteri
 | **API Key Management** | Secure storage of OpenAI/Anthropic API keys | .env file; no hardcoded keys; clear error messages for missing/invalid keys |
 | **Cost Estimation** | Report API cost before running AI pass | "$X.XX for Y ambiguous elements across N views" |
 
-#### Phase 3: Advanced Features
+#### Phase 3: Provenance and Trust
+
+| Feature | Description | Priority |
+|---|---|---|
+| **IFC GlobalId Linking** | Map output features back to source IFC element GlobalIds | P1 |
+| **Extraction Parameters** | Record classification rules, AI model version, and settings used | P1 |
+| **Spatial Validation** | Validate projected footprint is consistent with source shell geometry | P1 |
+| **Provenance Metadata** | Embed extraction metadata in GeoJSON properties and IFC header | P2 |
+
+#### Phase 4: Advanced Features
 
 | Feature | Description | Priority |
 |---|---|---|
@@ -228,13 +238,14 @@ Element IDs are labeled in the image. Return results as JSON:
 |---|---|---|
 | Language | Python 3.10+ | User's primary language, rich BIM/GIS ecosystem |
 | IFC Parsing | ifcopenshell | De facto standard, open-source, mature |
-| Geometry Processing | Shapely + numpy | Face merging, coplanar detection, triangulation |
-| Multipatch Output | GeoPackage via GDAL/ogr2ogr | User's existing GIS toolchain |
+| Geometry Processing | Shapely + numpy | Face merging, exterior face detection, footprint union |
 | Rendering (Phase 2) | pyvista or trimesh | Headless, Python-native, no browser |
 | AI Vision (Phase 2) | OpenAI GPT-4o API | Best accuracy for structured vision tasks |
 | CLI Framework | Click | Clean argument parsing, help text |
 | Packaging | pyproject.toml + pip | Standard Python packaging |
 | Testing | pytest | User's preferred framework |
+
+> **Note**: GDAL and geopandas were removed in v1.2.0. The tool now has zero heavy GIS dependencies. Only ifcopenshell, Shapely, numpy, and click are required.
 
 ### 6.2 Module Structure
 
@@ -243,6 +254,7 @@ exterior-shell/
 ├── pyproject.toml
 ├── README.md
 ├── LICENSE
+├── py.typed
 ├── exterior_shell/
 │   ├── __init__.py
 │   ├── cli.py                  # Click CLI entry point
@@ -250,37 +262,29 @@ exterior-shell/
 │   │   ├── __init__.py
 │   │   ├── parser.py           # IFC parsing with ifcopenshell
 │   │   ├── classifier.py       # Rule-based classification engine
-│   │   ├── assembler.py        # Geometry assembly + multipatch creation
-│   │   ├── simplifier.py       # Mesh decimation + face merging
+│   │   ├── assembler.py        # Geometry assembly + face deduplication
+│   │   ├── shell_detection.py  # Exterior face detection via STRtree
 │   │   └── models.py           # Data classes (Element, Classification, Shell)
 │   ├── ai/
-│   │   ├── __init__.py
-│   │   ├── renderer.py         # Multi-view rendering of IFC model
-│   │   ├── classifier.py       # Vision model API calls
-│   │   ├── aggregator.py       # Multi-view classification aggregation
-│   │   └── prompts.py          # Versioned prompt templates
+│   │   └── ...                 # Vision model classification (Phase 2)
 │   ├── export/
 │   │   ├── __init__.py
-│   │   ├── geopackage.py       # GeoPackage/multipatch export
-│   │   ├── stripped_ifc.py     # Stripped IFC export (exterior only)
-│   │   ├── geojson.py          # GeoJSON with extruded polygons
-│   │   ├── floor_footprints.py # Per-floor footprint exporter (opt-in)
+│   │   ├── stripped_ifc.py     # Stripped IFC export (remove interior elements)
+│   │   ├── footprint.py        # 2D footprint GeoJSON with elevation attributes
 │   │   └── report.py           # Extraction report generation
 │   └── utils/
 │       ├── __init__.py
-│       ├── geometry.py         # Geometry helpers (normals, merging, etc.)
+│       ├── geometry.py         # Geometry helpers (normals, face ops)
 │       └── io.py               # File I/O helpers
 ├── tests/
-│   ├── conftest.py
-│   ├── test_parser.py
-│   ├── test_classifier.py
-│   ├── test_assembler.py
-│   ├── test_export.py
-│   ├── test_cli.py
+│   ├── test_core.py            # Core logic tests (9 tests)
+│   ├── test_extraction.py      # Extraction pipeline tests (4 tests)
+│   ├── test_shell_detection.py # Shell detection tests (13 tests)
+│   ├── test_stripped_ifc.py    # Stripped IFC validity tests (7 tests)
+│   ├── test_helpers.py         # Utility tests (5 tests)
 │   └── fixtures/
-│       ├── simple_house.ifc        # Clean test model
-│       ├── messy_model.ifc          # Early-stage model with bad metadata
-│       └── complex_building.ifc     # Multi-story with varied elements
+│       ├── simple_house.ifc    # Clean test model
+│       └── ...                 # Test fixtures
 └── docs/
     ├── architecture.md
     └── classification_rules.md
@@ -327,40 +331,23 @@ Input IFC File
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ SIMPLIFIER (simplifier.py) [Optional]   │
-│ - Merge coplanar adjacent faces         │
-│ - Decimate non-essential detail         │
-│ - Preserve visual feature edges         │
-│ - Output: SimplifiedShellGeometry       │
-└─────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│ EXPORTER (geopackage.py / geojson.py)  │
-│ - Write geometry to chosen format       │
-│ - Add attributes: element_type, id,     │
-│   classification_source, confidence     │
-│ - Generate extraction report            │
-│ - Output: .gpkg / .geojson + report.md  │
-└─────────────────────────────────────────┘
-    │
-    ├── [if --stripped-ifc] ──► STRIPPED IFC EXPORTER
-    │                           (stripped_ifc.py)
-    │                           - Clone original IFC file
-    │                           - Remove interior elements
-    │                           - Strip orphaned relationships
-    │                           - Write clean .ifc output
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│ STRIPPED IFC EXPORT (stripped_ifc.py)  │
-│ - Clone original IFC via ifcopenshell   │
-│ - Remove all INTERIOR-classified elements│
-│ - Strip orphaned:                       │
-│   material associations, containment,   │
-│   property sets, spatial hierarchy      │
-│ - Validate output IFC structure         │
-│ - Output: stripped_<name>.ifc           │
+│ EXPORT                                    │
+│                                           │
+│ ├── Stripped IFC (default)                │
+│ │   Clone original IFC                    │
+│ │   Remove interior elements              │
+│ │   Strip orphaned relationships          │
+│ │   Output: <name>_stripped.ifc           │
+│ │                                         │
+│ ├── 2D Footprint (opt-in: --footprint)   │
+│ │   Project exterior faces to XY plane    │
+│ │   Union into single outline polygon     │
+│ │   Compute base_elevation, height, area  │
+│ │   Output: <name>_footprint.geojson      │
+│ │                                         │
+│ └── Report (default, skip with --no-report)
+│     Element counts, ambiguity score       │
+│     Output: <name>.report.md              │
 └─────────────────────────────────────────┘
 ```
 
@@ -379,7 +366,7 @@ Input IFC File
 | 3 | GeoPackage export + CLI | Export pipeline, Click CLI, extraction report |
 | 4 | Testing + polish | Unit tests, test fixtures, edge cases, README |
 
-**Exit criteria**: CLI tool processes a messy early-stage IFC file and produces a usable GeoPackage with exterior shell geometry. Ambiguity report is accurate.
+**Exit criteria** (achieved in v1.2.0): CLI tool processes an IFC file and produces a structurally valid stripped IFC (default) plus optional 2D footprint GeoJSON with elevation attributes. 38 passing tests including Z-coordinate and IFC validity regressions.
 
 ### Phase 2: AI-Enhanced Extraction
 
@@ -447,11 +434,12 @@ For each test model:
 
 | Metric | Target | Measurement |
 |---|---|---|
-| **Extraction accuracy** | >90% of exterior elements correctly identified (on well-structured IFC) | Manual inspection against 3 test models |
+| **Extraction accuracy** | >90% of exterior elements correctly identified | Manual inspection against test models |
 | **False positive rate** | <5% interior elements included | Count interior faces in output |
-| **File size reduction** | >80% reduction vs full model geometry | Compare input/output geometry weights |
-| **Processing speed** | <30 seconds for typical model (5000 elements) | Benchmark on Dell laptop |
-| **User satisfaction** | "This is better than manual cleanup" | Feedback from 3 Dar colleagues |
+| **File size reduction** | 33-78% reduction vs full model | Measured: test house 78%, office 33.2% |
+| **Processing speed** | <30 seconds for typical model | Measured: test house <2s, office ~26s |
+| **Test coverage** | 38 passing tests | Core, extraction, shell detection, stripped IFC, helpers |
+| **Dependencies** | Zero heavy GIS deps | Removed GDAL, geopandas; only ifcopenshell, shapely, numpy, click |
 
 ### Phase 2 (AI)
 
@@ -467,12 +455,17 @@ For each test model:
 
 | # | Question | Impact | Decision Needed By |
 |---|---|---|---|
-| 1 | What is the final product name? | Branding, domain, packaging | Before Phase 3 |
-| 2 | Open-source or proprietary? | Distribution model, community building | Before MVP launch |
-| 3 | CLI-only for MVP, or include minimal web UI? | Development time, user accessibility | Before Phase 1 |
-| 4 | Should it handle multi-building IFC files? | Parsing complexity, edge cases | Week 1 |
-| 5 | Target CRS handling: WGS84 only, or user-configurable? | Export complexity | Week 2 |
-| 6 | License: MIT (like arcgis-portal-mcp) or more restrictive? | Community adoption, commercialization | Before MVP launch |
+| # | Question | Impact | Status |
+|---|---|---|---|
+| 1 | What is the final product name? | Branding, domain, packaging | **Decided**: exterior-shell |
+| 2 | Open-source or proprietary? | Distribution model, community building | **Decided**: Open-source (MIT) |
+| 3 | CLI-only for MVP, or include minimal web UI? | Development time, user accessibility | **Decided**: CLI-only for MVP |
+| 4 | Should it handle multi-building IFC files? | Parsing complexity, edge cases | **Decided**: Yes, process first building |
+| 5 | Target CRS handling: WGS84 only, or user-configurable? | Export complexity | **Decided**: User-configurable via `--crs` (default WGS84) |
+| 6 | GeoPackage 3D export viable? | Output format complexity | **Decided**: Removed in v1.2.0 — GPKG binary header Z flag broken, ArcGIS Pro reads as 2D |
+| 7 | Mesh simplifier needed? | Performance, code complexity | **Decided**: Removed in v1.2.0 — O(n^2) too slow for large models |
+| 8 | Per-floor footprints for MVP? | Feature scope | **Deferred**: Planned for future release |
+| 9 | --floor-footprints flag | Feature scope | **Deferred**: Planned for future release |
 
 ---
 
@@ -483,24 +476,35 @@ For each test model:
 | ifcopenshell | latest | IFC parsing | Low (mature, active) |
 | shapely | 2.0+ | Geometry operations | Low (mature) |
 | numpy | 1.24+ | Array operations | Low (mature) |
-| GDAL/ogr2ogr | 3.x | GeoPackage export | Low (already installed) |
+| ~~GDAL/ogr2ogr~~ | ~~3.x~~ | ~~GeoPackage export~~ | **Removed in v1.2.0** (broken Z-coordinates) |
 | click | 8.0+ | CLI framework | Low (mature) |
 | pyvista | latest | 3D rendering (Phase 2) | Medium (headless rendering) |
 | openai | latest | Vision API (Phase 2) | Low (stable API) |
 
 ---
 
-## Appendix A: Similar Products in the Market
+## Appendix A: Competitive Landscape
 
-| Product | What it does | Price | Limitation |
-|---|---|---|---|
-| Esri ExteriorShell | Auto-extract exterior from Revit/IFC in ArcGIS Pro | Free (with ArcGIS Pro license) | Broken: misses elements, includes junk, poor reliability |
-| FME | General BIM-to-GIS conversion | ~$4,200/year | Overkill for this task, expensive |
-| GISBox | Full BIM-to-3D-Tiles conversion | Free tier available | Converts everything, not exterior-only |
-| Cesium ion | 3D Tiles hosting + conversion | $varies | Requires source 3D Tiles, doesn't do BIM classification |
-| Polygon Cruncher | Generic mesh decimation | One-time license | Not BIM-aware, no classification |
+### Direct Competitors
 
-**Our differentiator**: Purpose-built for ONE task (exterior shell extraction), affordable, optional AI for messy models, GIS-native output.
+| Product | Output Format | LoD Coverage | IFC Versions | Dependencies | Price |
+|---|---|---|---|---|---|
+| **exterior-shell** | Stripped IFC + GeoJSON | Exterior shell + footprint | IFC2x3, IFC4 | ifcopenshell, shapely, numpy | Free (MIT) |
+| **IfcEnvelopeExtractor (TU Delft)** | CityJSON, STEP, OBJ | LOD0 through LOD5 (full spectrum) | IFC2x3, IFC4, IFC4x3 | C++ binaries | Free (academic) |
+| **IfcConvert** | Mesh (OBJ, STL, etc.) | Exterior shell only | IFC2x3, IFC4 | IfcOpenShell | Free (LGPL) |
+| **Esri ExteriorShell** | ArcGIS Pro building layer | Automatic sublayer | IFC, RVT | ArcGIS Pro | License required |
+| **FME** | Multiple (via transformers) | Full BIM-to-GIS | Multiple | FME Desktop | ~$4,200/year |
+
+### Key Differences
+
+- **exterior-shell** targets GIS practitioners who need a clean stripped IFC plus GeoJSON footprint for ArcGIS/web map workflows. Rule-based by default, optional AI for messy models. Zero heavy GIS dependencies.
+- **IfcEnvelopeExtractor** targets 3D city modeling with CityJSON output and full LoD framework coverage. Academic-grade, built on Biljecki et al. LoD taxonomy. Different output ecosystem.
+- **IfcConvert** is a general-purpose IFC converter with an `--exterior-only` flag. Outputs mesh only, no structurally valid IFC, no GIS attributes.
+- **Esri ExteriorShell** is built into ArcGIS Pro but unreliable: misses roofs, ground floors, includes interior geometry. No standalone output file.
+
+### Our Differentiator
+
+Purpose-built for ONE task: giving GIS practitioners a clean entry point when they receive BIM data they didn't ask for. First open-source CLI outputting both structurally valid stripped IFC and 2D footprint with elevation attributes. Not about merging BIM and GIS. About solving one specific problem well.
 
 ---
 

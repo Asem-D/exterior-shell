@@ -11,17 +11,18 @@ Optional AI-assisted classification handles ambiguous elements (walls, columns, 
 
 ## Why
 
-BIM models contain everything: walls, windows, roofs, HVAC, furniture, pipes. When you need just the building envelope, you're left with bad options:
+GIS teams don't ask for BIM models. They receive them. Architecture practices export IFC files and hand them off, and the GIS analyst is left with 500MB of pipes, HVAC, and furniture when they need just the building envelope for a web map or spatial analysis.
 
 | Approach | Stripped IFC | GIS Footprint | Cost |
 |----------|:---:|:---:|:---:|
 | **exterior-shell** | ✅ | ✅ With elevation | Free |
+| IfcEnvelopeExtractor (TU Delft) | ❌ (CityJSON) | ❌ (CityJSON) | Free |
 | ArcGIS Pro Building Layer | ❌ No standalone output | ❌ | ArcGIS Pro license |
 | FME (IFC Connector) | ❌ | Via translation | $4K+/yr |
 | IfcConvert `--exterior-only` | ❌ Mesh only | ❌ | Free |
 | Manual Revit/ArchiCAD cleanup | ❌ | ❌ | Hours per model |
 
-`exterior-shell` does one thing and gets it right: clean exterior shell, lightweight output, under 30 seconds.
+`exterior-shell` does one thing: clean exterior shell, lightweight output, under 30 seconds. The output is a structurally valid IFC file that any BIM or GIS tool can read, plus an optional GeoJSON footprint ready for ArcGIS Pro, QGIS, or web maps.
 
 ## Install
 
@@ -142,10 +143,21 @@ exterior_shell/
     └── ...             # Geometry helpers, I/O utilities
 ```
 
+## Prior Art
+
+This problem has been approached from different angles:
+
+- **IfcEnvelopeExtractor** (TU Delft): Academic-grade tool outputting CityJSON, STEP, and OBJ with full LoD coverage (LOD0 through LOD5). Built on the Biljecki et al. LoD framework. Different output ecosystem from exterior-shell. If you're building 3D city models with CityJSON, that's the tool. [GitHub](https://github.com/tudelft3d/IFC_BuildingEnvExtractor)
+- **IfcConvert** (`--exterior-only`): Open-source, extracts exterior shell as mesh. No structurally valid IFC output, no GIS attributes.
+- **Esri ExteriorShell**: Built into ArcGIS Pro. Automatic sublayer extraction when loading IFC/RVT. Often misses roofs, ground floors, and includes interior geometry.
+
+exterior-shell targets a narrower niche: GIS practitioners who need a clean stripped IFC plus a GeoJSON footprint with elevation attributes, with zero heavy GIS dependencies.
+
 ## Roadmap
 
 - **v1.2** (current) - Stripped IFC + 2D footprint output, rule-based extraction
 - **v1.3** - AI-assisted classification for ambiguous elements (multi-view rendering + vision API)
+- **v1.4** - Provenance metadata: link output features to IFC GlobalIds, record extraction parameters, validate spatial consistency with source shell
 - **v2.0** - Revit direct integration (.rvt), 3D Tiles export, LOD generation
 
 ## License
@@ -156,7 +168,7 @@ MIT
 
 Built with [ifcopenshell](https://github.com/IfcOpenShell/IfcOpenShell) and [Shapely](https://shapely.readthedocs.io/).
 
-Inspired by the daily pain of infrastructure GIS teams who spend hours cleaning BIM models they shouldn't have to clean.
+Inspired by the daily pain of GIS teams who receive BIM models they didn't ask for and need just the envelope.
 
 ## Trademarks
 
