@@ -26,16 +26,17 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 
-[project.urls]
-Homepage = "https://github.com/Asem-D/exterior-shell"
-Repository = "https://github.com/Asem-D/exterior-shell"
-Issues = "https://github.com/Asem-D/exterior-shell/issues"
 dependencies = [
     "ifcopenshell>=0.7.0",
     "shapely>=2.0",
     "numpy>=1.24",
     "click>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Asem-D/exterior-shell"
+Repository = "https://github.com/Asem-D/exterior-shell"
+Issues = "https://github.com/Asem-D/exterior-shell/issues"
 
 [project.optional-dependencies]
 ai = [
