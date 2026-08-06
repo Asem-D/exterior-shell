@@ -54,6 +54,16 @@ def main():
     help="Enable AI-assisted classification for ambiguous elements",
 )
 @click.option(
+    "--api-key",
+    default=None,
+    help="API key for AI classification (or set EXTERIOR_SHELL_AI_KEY env var)",
+)
+@click.option(
+    "--ai-model",
+    default=None,
+    help="AI model name (default: openai/gpt-4o-mini)",
+)
+@click.option(
     "--no-filter",
     is_flag=True,
     default=False,
@@ -104,6 +114,8 @@ def extract(
     input_file: str,
     output_dir: str | None,
     ai: bool,
+    api_key: str | None,
+    ai_model: str | None,
     no_filter: bool,
     report: bool,
     verbose: bool,
@@ -122,6 +134,7 @@ def extract(
         exterior-shell extract building.ifc --footprint
         exterior-shell extract building.ifc --footprint --no-stripped-ifc
         exterior-shell extract building.ifc --footprint --crs EPSG:3857
+        exterior-shell extract building.ifc --ai --api-key sk-or-v1-xxx
     """
     _setup_logging(verbose)
     logger = logging.getLogger("exterior_shell.cli")
@@ -156,12 +169,35 @@ def extract(
         report_data = classify_all(elements)
 
         if report_data.ambiguous_count > 0:
-            click.echo(
-                f"  {report_data.ambiguous_count} ambiguous elements "
-                f"(defaulting to exterior)",
-                err=True,
-            )
-            report_data = resolve_ambiguities(report_data, use_ai=ai)
+            if ai:
+                # Resolve AI config (precedence: CLI flags > env vars > config file)
+                from .ai import classify_ambiguous_with_ai, resolve_ai_config
+                ai_config = resolve_ai_config(api_key=api_key, model=ai_model)
+                if ai_config is None:
+                    click.echo(
+                        "  ERROR: --ai requires an API key. Provide via:\n"
+                        "    --api-key flag, EXTERIOR_SHELL_AI_KEY env var,\n"
+                        "    or ~/.exterior-shell/config.json",
+                        err=True,
+                    )
+                    sys.exit(1)
+                click.echo(
+                    f"  {report_data.ambiguous_count} ambiguous elements "
+                    f"(using AI: {ai_config.model})",
+                    err=True,
+                )
+                report_data = classify_ambiguous_with_ai(
+                    report=report_data,
+                    ifc_path=input_path,
+                    config=ai_config,
+                )
+            else:
+                click.echo(
+                    f"  {report_data.ambiguous_count} ambiguous elements "
+                    f"(defaulting to exterior)",
+                    err=True,
+                )
+                report_data = resolve_ambiguities(report_data, use_ai=False)
 
         click.echo(
             f"  {report_data.exterior_count} exterior, "
