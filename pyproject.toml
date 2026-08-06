@@ -52,5 +52,8 @@ exterior-shell = "exterior_shell.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["exterior_shell"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["tests/", "linkedin-diagram*", "_gen_screenshot.py", "_take_screenshot.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

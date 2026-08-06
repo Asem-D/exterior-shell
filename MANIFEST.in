@@ -1,0 +1,4 @@
+recursive-exclude tests *
+recursive-exclude exterior_shell *.pyc
+include LICENSE
+include README.md
