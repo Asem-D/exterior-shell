@@ -270,19 +270,14 @@ def _parse_classification_response(
 def _load_config_file() -> dict:
     """Load config from ~/.exterior-shell/config.json.
 
+    Backward-compatible wrapper around
+    :func:`exterior_shell.config._load_config_file`.
+
     Returns:
         Config dict or empty dict if not found.
     """
-    config_path = Path.home() / ".exterior-shell" / "config.json"
-    if not config_path.exists():
-        return {}
-    try:
-        import json
-        with open(config_path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"Failed to read config file {config_path}: {e}")
-        return {}
+    from ..config import _load_config_file as _load_user_config
+    return _load_user_config()
 
 
 def resolve_ai_config(
