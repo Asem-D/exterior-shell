@@ -62,7 +62,7 @@ exterior-shell extract building.ifc --footprint
 # Output: building_stripped.ifc + building_footprint.geojson + building.report.md
 ```
 
-The footprint GeoJSON includes `base_elevation`, `height`, `min_elevation`, `max_elevation`, and `area` properties. Load it in ArcGIS Pro or QGIS and extrude by the `height` attribute, or use it directly in web maps (MapLibre, CesiumJS).
+The footprint GeoJSON includes `base_elevation`, `height`, `min_elevation`, `max_elevation`, `area`, and `contributing_global_ids` properties. Load it in ArcGIS Pro or QGIS and extrude by the `height` attribute, or use it directly in web maps (MapLibre, CesiumJS).
 
 ### Stripped IFC only (no GIS output)
 
@@ -91,13 +91,44 @@ export EXTERIOR_SHELL_AI_KEY=sk-or-v1-xxx
 exterior-shell extract building.ifc --ai
 
 # Or use a config file
-echo '{"ai_api_key": "sk-or-v1-xxx", "ai_model": "openai/gpt-4o-mini"}' > ~/.exterior-shell/config.json
+exterior-shell config init
+# Edit ~/.exterior-shell/config.json
 exterior-shell extract building.ifc --ai
 ```
 
 **BYOK (Bring Your Own Key)**: no telemetry, no data leaves your machine unless you explicitly enable `--ai` and provide your own key. Works with any OpenAI-compatible API (OpenRouter, OpenAI, Azure, etc.).
 
-**Config precedence**: CLI flag (`--api-key`) > env var (`EXTERIOR_SHELL_AI_KEY`) > config file (`~/.exterior-shell/config.json`)
+### Batch processing
+
+Process all IFC files in a directory recursively:
+
+```bash
+exterior-shell batch /path/to/models/
+# Processes every .ifc file found, outputs to per-file subdirectories
+```
+
+Each file gets its own output subdirectory. Errors on individual files are logged and skipped (the batch continues).
+
+### Configuration
+
+Store default CLI flags in `~/.exterior-shell/config.json`:
+
+```bash
+exterior-shell config init    # Create config file with defaults
+exterior-shell config show    # Display current config and sources
+```
+
+**Config precedence**: CLI flags > environment variables > config file > hardcoded defaults.
+
+```json
+{
+  "ai_api_key": "sk-...",
+  "ai_model": "openai/gpt-4o-mini",
+  "default_crs": "EPSG:4326",
+  "default_footprint": true,
+  "default_report": true
+}
+```
 
 ### Other options
 
@@ -107,6 +138,7 @@ exterior-shell extract building.ifc --keep-interior      # Include interior-faci
 exterior-shell extract building.ifc --no-report          # Skip report generation
 exterior-shell extract building.ifc --json-stats         # Machine-readable output
 exterior-shell info building.ifc                         # Inspect IFC file
+exterior-shell info building.ifc --validate stripped.ifc # Spatial consistency check
 ```
 
 ## How It Works
@@ -125,7 +157,7 @@ IFC File
   └─ Export
       ├─ Stripped IFC (.ifc) ─ structurally valid IFC with interiors removed
       ├─ Footprint (.geojson) ─ 2D outline with base_elevation and height
-      └─ Report (.md) ─ extraction summary with element counts
+      └─ Report (.md) ─ extraction summary with provenance metadata
 ```
 
 ### Classification Rules
@@ -151,6 +183,25 @@ Ambiguous elements
                  Fallback: exterior (conservative) if API fails
 ```
 
+## Provenance Metadata
+
+Every extraction records full provenance for traceability:
+
+- **Extraction parameters**: version, CRS, AI settings, classification mode recorded in the report and JSON output
+- **Contributing element IDs**: every footprint feature and extraction report lists the IFC GlobalIds of source elements
+- **Spatial consistency validation**: compare original and stripped IFC bounding boxes to detect geometry drift
+
+```bash
+# View extraction parameters in the report
+cat building.report.md
+
+# Validate spatial consistency
+exterior-shell info building.ifc --validate building_stripped.ifc
+
+# Machine-readable output includes params
+exterior-shell extract building.ifc --json-stats
+```
+
 ## Performance
 
 Tested on real-world IFC models:
@@ -172,11 +223,12 @@ pytest tests/ -v
 ```
 exterior_shell/
 ├── cli.py              # Click CLI entry point
+├── config.py           # Configuration management (~/.exterior-shell/)
 ├── core/
 │   ├── parser.py       # IFC parsing with ifcopenshell
 │   ├── classifier.py   # Rule-based classification engine
 │   ├── assembler.py    # Geometry assembly + face deduplication
-│   └── models.py       # Data classes (Element, Classification, Shell)
+│   └── models.py       # Data classes (Element, Classification, Shell, ExtractionParams)
 ├── ai/
 │   ├── classifier.py   # AI orchestration (render → classify → apply)
 │   ├── renderer.py     # Multi-view rendering (trimesh + matplotlib fallback)
@@ -200,9 +252,10 @@ exterior-shell targets a narrower niche: GIS practitioners who need a clean stri
 
 ## Roadmap
 
-- **v1.2** - Stripped IFC + 2D footprint output, rule-based extraction
-- **v1.3** (current) - AI-assisted classification for ambiguous elements (multi-view rendering + vision API, BYOK)
-- **v1.4** - Provenance metadata: link output features to IFC GlobalIds, record extraction parameters, validate spatial consistency with source shell
+- **v1.0** - Stripped IFC + 2D footprint output, rule-based extraction
+- **v1.3** - AI-assisted classification for ambiguous elements (multi-view rendering + vision API, BYOK)
+- **v1.4** - Batch processing, config file defaults, enriched info command
+- **v1.5** (current) - Provenance metadata: extraction parameters, contributing element IDs, spatial consistency validation
 - **v2.0** - Revit direct integration (.rvt), 3D Tiles export, LOD generation
 
 ## License

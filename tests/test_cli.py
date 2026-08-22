@@ -278,3 +278,100 @@ def test_info_enriched():
     assert "Estimated volume" in result.output
     assert "Pre-classification preview" in result.output
     assert "Ambiguity score" in result.output
+
+
+# ── provenance ───────────────────────────────────────────────────────────────
+
+def test_extract_json_stats_includes_params(tmp_path: Path):
+    """--json-stats output includes extraction parameters."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path), "--json-stats"],
+    )
+    assert result.exit_code == 0
+    import json
+    # The JSON stats block starts with {"input_file" and ends before the summary
+    marker = '"input_file"'
+    idx = result.output.find(marker)
+    assert idx >= 0, "No JSON stats found in output"
+    # Walk backwards to find the opening brace
+    start = result.output.rfind("{", 0, idx)
+    # Walk forward to find matching closing brace (count nesting)
+    depth = 0
+    end = start
+    for i in range(start, len(result.output)):
+        if result.output[i] == "{":
+            depth += 1
+        elif result.output[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    data = json.loads(result.output[start:end])
+    assert "params" in data
+    assert data["params"]["version"] == "1.5.0"
+    assert data["params"]["crs"] == "EPSG:4326"
+    assert data["params"]["ai_enabled"] is False
+
+
+def test_footprint_includes_contributing_ids(tmp_path: Path):
+    """Footprint GeoJSON includes contributing_global_ids."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path), "--footprint"],
+    )
+    assert result.exit_code == 0
+    import json
+    footprint = tmp_path / "test_building_footprint.geojson"
+    data = json.loads(footprint.read_text(encoding="utf-8"))
+    props = data["features"][0]["properties"]
+    assert "contributing_global_ids" in props
+    assert isinstance(props["contributing_global_ids"], list)
+    assert len(props["contributing_global_ids"]) > 0
+
+
+def test_report_includes_parameters(tmp_path: Path):
+    """Extraction report includes provenance parameters."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path)],
+    )
+    assert result.exit_code == 0
+    report = tmp_path / "test_building.report.md"
+    content = report.read_text(encoding="utf-8")
+    assert "Parameters:" in content
+    assert "Version:" in content
+    assert "1.5.0" in content
+
+
+def test_report_includes_contributing_ids(tmp_path: Path):
+    """Extraction report includes contributing element IDs."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["extract", str(FIXTURE), "-o", str(tmp_path)],
+    )
+    assert result.exit_code == 0
+    report = tmp_path / "test_building.report.md"
+    content = report.read_text(encoding="utf-8")
+    assert "Contributing Element IDs" in content
+
+
+def test_info_validate_flag():
+    """info --validate accepts a stripped IFC path."""
+    runner = CliRunner()
+    # First extract a stripped IFC
+    result = runner.invoke(main, ["extract", str(FIXTURE)])
+    assert result.exit_code == 0
+    stripped = FIXTURE.parent.parent / "test_building_stripped.ifc"
+    if stripped.exists():
+        result2 = runner.invoke(
+            main, ["info", str(FIXTURE), "--validate", str(stripped)]
+        )
+        assert result2.exit_code == 0
+        assert "Spatial Consistency" in result2.output
+        assert "containment" in result2.output.lower() or "Containment" in result2.output
+        stripped.unlink()  # cleanup

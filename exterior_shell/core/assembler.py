@@ -67,6 +67,7 @@ def assemble_shell(
     shell = ShellGeometry(
         element_count=len(exterior_elements),
         source_elements=exterior_elements,
+        contributing_global_ids=[e.global_id for e in exterior_elements],
     )
 
     # Collect all exterior faces

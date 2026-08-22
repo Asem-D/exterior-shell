@@ -243,3 +243,62 @@ def test_shell_stats():
     assert "face_count" in stats
     assert "bbox" in stats
     assert "total_area" in stats
+
+
+# ── Provenance ──────────────────────────────────────────────────────────────
+
+
+def test_extraction_params_defaults():
+    """ExtractionParams has correct defaults."""
+    from exterior_shell.core.models import ExtractionParams
+    p = ExtractionParams()
+    assert p.version == "1.5.0"
+    assert p.crs == "EPSG:4326"
+    assert p.ai_enabled is False
+    assert p.classification_mode == "rule_based"
+
+
+def test_extraction_params_to_dict():
+    """ExtractionParams.to_dict serializes correctly."""
+    from exterior_shell.core.models import ExtractionParams
+    p = ExtractionParams(ai_enabled=True, ai_model="openai/gpt-4o-mini")
+    d = p.to_dict()
+    assert d["ai_enabled"] is True
+    assert d["ai_model"] == "openai/gpt-4o-mini"
+    assert d["classification_mode"] == "rule_based"  # not auto-set by to_dict
+    assert "version" in d
+
+
+def test_extraction_params_summary():
+    """ExtractionParams.summary includes key fields."""
+    from exterior_shell.core.models import ExtractionParams
+    p = ExtractionParams(ai_enabled=True, ai_model="gpt-4o")
+    s = p.summary()
+    assert "1.5.0" in s
+    assert "EPSG:4326" in s
+    assert "gpt-4o" in s
+
+
+def test_contributing_global_ids_populated():
+    """ShellGeometry.contributing_global_ids is populated from elements."""
+    import numpy as np
+    from exterior_shell.core.models import Element, ElementType, Classification
+    e1 = Element(global_id="id-001", name="Wall", ifc_type="IfcWall", element_type=ElementType.WALL)
+    e2 = Element(global_id="id-002", name="Roof", ifc_type="IfcRoof", element_type=ElementType.ROOF)
+    for e in (e1, e2):
+        e.faces = [Face(
+            vertices=np.array([[0,0,0],[1,0,0],[1,1,0]], dtype=float),
+            normal=np.array([0,0,1], dtype=float),
+        )]
+        e.classification = Classification.EXTERIOR
+    shell = assemble_shell([e1, e2])
+    assert "id-001" in shell.contributing_global_ids
+    assert "id-002" in shell.contributing_global_ids
+
+
+def test_extraction_result_has_params():
+    """ExtractionResult includes ExtractionParams by default."""
+    from exterior_shell.core.models import ExtractionResult, ExtractionParams
+    result = ExtractionResult()
+    assert isinstance(result.params, ExtractionParams)
+    assert result.params.version == "1.5.0"

@@ -15,7 +15,7 @@ from . import __version__
 from .core.parser import parse_ifc
 from .core.classifier import classify_all, resolve_ambiguities
 from .core.assembler import assemble_shell, get_shell_stats
-from .core.models import Classification, ExtractionResult
+from .core.models import Classification, ExtractionResult, ExtractionParams
 from .export.stripped_ifc import export_stripped_ifc
 from .export.footprint import export_footprint_geojson, write_extraction_report
 
@@ -193,6 +193,17 @@ def _run_extract_pipeline(
     elapsed = time.time() - start_time
     input_size = input_path.stat().st_size
 
+    from . import __version__
+    params = ExtractionParams(
+        version=__version__,
+        crs=crs,
+        keep_interior=keep_interior,
+        simplify=False,
+        ai_enabled=ai,
+        ai_model=ai_model if ai else None,
+        classification_mode="ai" if ai else "rule_based",
+    )
+
     placeholder_report = report_data or type('obj', (object,), {
         'total_elements': len(elements),
         'exterior_count': len(elements),
@@ -212,6 +223,7 @@ def _run_extract_pipeline(
         output_file=str(stripped_output if stripped_result else (footprint_path or "")),
         input_element_count=len(elements),
         output_face_count=stats['face_count'],
+        params=params,
     )
 
     if report and report_data:
@@ -270,6 +282,7 @@ def _run_extract_pipeline(
             "shell": stats,
             "stripped_ifc": stripped_result,
             "footprint": {k: v for k, v in footprint_data.items() if k != "polygon"} if footprint_data else None,
+            "params": params.to_dict(),
             "elapsed_seconds": round(elapsed, 2),
         }
         click.echo(json.dumps(stats_output, indent=2))
@@ -623,11 +636,21 @@ def batch(
 
 @main.command()
 @click.argument("input_file", type=click.Path(exists=True))
-def info(input_file: str):
+@click.option(
+    "--validate",
+    "validate_file",
+    type=click.Path(exists=True),
+    default=None,
+    help="Validate spatial consistency against a stripped IFC output file.",
+)
+def info(input_file: str, validate_file: str | None):
     """Show information about an IFC file.
 
     Displays element counts, types, geometry statistics, bounding box,
     estimated volume, and a pre-classification preview.
+
+    With --validate, compares spatial consistency against a stripped IFC
+    output to detect geometry drift.
     """
     _setup_logging(False)
 
@@ -688,6 +711,64 @@ def info(input_file: str):
             "  Tip: ambiguity score > 30% - consider running extract with "
             "--ai for better results."
         )
+
+    # Spatial consistency validation
+    if validate_file:
+        _validate_spatial_consistency(input_path, Path(validate_file), bbox_min, bbox_max)
+
+
+def _validate_spatial_consistency(
+    original_path: Path,
+    stripped_path: Path,
+    original_bbox_min,
+    original_bbox_max,
+) -> None:
+    """Compare spatial extent of original IFC against stripped IFC output.
+
+    Reports bounding box overlap ratio and element count reduction.
+    """
+    import numpy as np
+
+    click.echo()
+    click.echo("Spatial Consistency Validation")
+    click.echo("-" * 40)
+
+    stripped_elements = parse_ifc(stripped_path)
+    stripped_bbox_min, stripped_bbox_max = _compute_global_bbox(stripped_elements)
+
+    if original_bbox_min is None or stripped_bbox_min is None:
+        click.echo("  Cannot compute: missing bounding box data")
+        return
+
+    # Compute overlap
+    overlap_min = np.maximum(original_bbox_min, stripped_bbox_min)
+    overlap_max = np.minimum(original_bbox_max, stripped_bbox_max)
+    overlap_dims = np.maximum(overlap_max - overlap_min, 0.0)
+
+    original_vol = float(np.prod(original_bbox_max - original_bbox_min))
+    stripped_vol = float(np.prod(stripped_bbox_max - stripped_bbox_min))
+    overlap_vol = float(np.prod(overlap_dims))
+
+    if original_vol > 0:
+        containment = overlap_vol / original_vol * 100
+    else:
+        containment = 0.0
+
+    original_elements = len(parse_ifc(original_path))
+    stripped_count = len(stripped_elements)
+    reduction_pct = (1 - stripped_count / original_elements) * 100 if original_elements > 0 else 0
+
+    click.echo(f"  Original:   {original_elements} elements, bbox vol {original_vol:.2f}")
+    click.echo(f"  Stripped:   {stripped_count} elements, bbox vol {stripped_vol:.2f}")
+    click.echo(f"  Reduction:  {reduction_pct:.1f}% elements removed")
+    click.echo(f"  Containment: {containment:.1f}% bounding box overlap")
+
+    if containment >= 99.0:
+        click.echo("  Status: PASS - stripped shell fully contained in original")
+    elif containment >= 95.0:
+        click.echo("  Status: WARN - minor geometry drift detected")
+    else:
+        click.echo("  Status: FAIL - significant geometry drift, review extraction")
 
 
 def _compute_global_bbox(elements) -> tuple[Optional[Any], Optional[Any]]:

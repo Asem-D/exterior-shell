@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "exterior-shell"
-version = "1.4.0"
+version = "1.5.0"
 description = "Extract lightweight exterior shells from BIM models (IFC). Stripped IFC + GeoJSON footprint + optional AI classification for GIS."
 readme = "README.md"
 license = "MIT"

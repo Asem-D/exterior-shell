@@ -140,6 +140,7 @@ class ShellGeometry:
     element_count: int = 0
     total_face_count: int = 0
     source_elements: list[Element] = field(default_factory=list)
+    contributing_global_ids: list[str] = field(default_factory=list)
 
     @property
     def bbox_min(self) -> Optional[np.ndarray]:
@@ -157,6 +158,42 @@ class ShellGeometry:
 
 
 @dataclass
+class ExtractionParams:
+    """Parameters used during extraction for provenance tracking."""
+    version: str = "1.5.0"
+    crs: str = "EPSG:4326"
+    keep_interior: bool = False
+    simplify: bool = False
+    ai_enabled: bool = False
+    ai_model: Optional[str] = None
+    classification_mode: str = "rule_based"  # rule_based or ai
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "version": self.version,
+            "crs": self.crs,
+            "keep_interior": self.keep_interior,
+            "simplify": self.simplify,
+            "ai_enabled": self.ai_enabled,
+            "ai_model": self.ai_model,
+            "classification_mode": self.classification_mode,
+        }
+
+    def summary(self) -> str:
+        lines = [
+            f"Version:      {self.version}",
+            f"CRS:          {self.crs}",
+            f"Keep interior: {self.keep_interior}",
+            f"Simplify:     {self.simplify}",
+            f"AI enabled:   {self.ai_enabled}",
+        ]
+        if self.ai_model:
+            lines.append(f"AI model:     {self.ai_model}")
+        return "\n".join(lines)
+
+
+@dataclass
 class ExtractionResult:
     """Complete result of the extraction pipeline."""
     classification_report: ClassificationReport = field(default_factory=ClassificationReport)
@@ -166,9 +203,7 @@ class ExtractionResult:
     input_element_count: int = 0
     output_face_count: int = 0
     file_size_reduction: float = 0.0
-    crs: str = "EPSG:4326"
-    keep_interior: bool = False
-    simplify: bool = False
+    params: ExtractionParams = field(default_factory=ExtractionParams)
 
     def summary(self) -> str:
         lines = [
@@ -177,6 +212,9 @@ class ExtractionResult:
             "=" * 50,
             f"Input:  {self.input_file}",
             f"Output: {self.output_file}",
+            "",
+            "Parameters:",
+            self.params.summary(),
             "",
             "Classification:",
             self.classification_report.summary(),
