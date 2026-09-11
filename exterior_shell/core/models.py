@@ -160,7 +160,7 @@ class ShellGeometry:
 @dataclass
 class ExtractionParams:
     """Parameters used during extraction for provenance tracking."""
-    version: str = "1.5.0"
+    version: str = "2.0.0"
     crs: str = "EPSG:4326"
     keep_interior: bool = False
     simplify: bool = False

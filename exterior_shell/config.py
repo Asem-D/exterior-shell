@@ -40,6 +40,7 @@ CONFIG_FIELDS: dict[str, FieldDef] = {
     "ai_base_url": FieldDef("AI Base URL", "https://openrouter.ai/api/v1", "EXTERIOR_SHELL_AI_BASE"),
     "default_crs": FieldDef("Default CRS", "EPSG:4326", "EXTERIOR_SHELL_CRS"),
     "default_footprint": FieldDef("Default Footprint", False),
+    "default_tiles3d": FieldDef("Default 3D Tiles Export", False),
     "default_no_stripped_ifc": FieldDef("Default No Stripped IFC", False),
     "default_keep_interior": FieldDef("Default Keep Interior", False),
     "default_report": FieldDef("Default Report", True),

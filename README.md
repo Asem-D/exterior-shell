@@ -13,16 +13,16 @@ Extract lightweight exterior shells from BIM models (IFC) for GIS and visualizat
 
 GIS teams don't ask for BIM models. They receive them. Architecture practices export IFC files and hand them off, and the GIS analyst is left with 500MB of pipes, HVAC, and furniture when they need just the building envelope for a web map or spatial analysis.
 
-| Approach | Stripped IFC | GIS Footprint | AI Classification | Cost |
-|----------|:---:|:---:|:---:|:---:|
-| **exterior-shell** | ✅ | ✅ With elevation | ✅ Vision model (BYOK) | Free |
+| Approach | Stripped IFC | GIS Footprint | 3D Tiles | AI Classification | Cost |
+|----------|:---:|:---:|:---:|:---:|:---:|
+| **exterior-shell** | ✅ | ✅ With elevation | ✅ 3D Tiles 1.1 | ✅ Vision model (BYOK) | Free |
 | IfcEnvelopeExtractor (TU Delft) | ❌ (CityJSON) | ❌ (CityJSON) | ❌ | Free |
 | ArcGIS Pro Building Layer | ❌ No standalone output | ❌ | ❌ | ArcGIS Pro license |
 | FME (IFC Connector) | ❌ | Via translation | ❌ | $4K+/yr |
 | IfcConvert `--exterior-only` | ❌ Mesh only | ❌ | ❌ | Free |
 | Manual Revit/ArchiCAD cleanup | ❌ | ❌ | ❌ | Hours per model |
 
-`exterior-shell` does one thing: clean exterior shell, lightweight output, under 30 seconds. The output is a structurally valid IFC file that any BIM or GIS tool can read, plus an optional GeoJSON footprint ready for ArcGIS Pro, QGIS, or web maps.
+`exterior-shell` does one thing: clean exterior shell, lightweight output, under 30 seconds. The output is a structurally valid IFC file that any BIM or GIS tool can read, plus an optional GeoJSON footprint ready for ArcGIS Pro, QGIS, or web maps. For 3D web visualization, `--tiles3d` produces a CesiumJS-ready 3D Tiles 1.1 bundle.
 
 ## Install
 
@@ -63,6 +63,23 @@ exterior-shell extract building.ifc --footprint
 ```
 
 The footprint GeoJSON includes `base_elevation`, `height`, `min_elevation`, `max_elevation`, `area`, and `contributing_global_ids` properties. Load it in ArcGIS Pro or QGIS and extrude by the `height` attribute, or use it directly in web maps (MapLibre, CesiumJS).
+
+### Extract as 3D Tiles
+
+```bash
+exterior-shell extract building.ifc --tiles3d
+# Output: building_3dtiles/tileset.json + building_3dtiles/model.glb
+```
+
+Produces a 3D Tiles 1.1 directory ready for CesiumJS or any 3D Tiles viewer. The GLB contains the exterior shell mesh with flat shading, PBR material, and correct Y-up coordinate transform (IFC Z-up to glTF Y-up). Zero new dependencies — the GLB is written with pure Python `struct`.
+
+```bash
+# Combine with footprint, skip stripped IFC
+exterior-shell extract building.ifc --tiles3d --footprint --no-stripped-ifc
+
+# Batch process a directory
+exterior-shell batch /path/to/models/ --tiles3d
+```
 
 ### Stripped IFC only (no GIS output)
 
@@ -126,6 +143,7 @@ exterior-shell config show    # Display current config and sources
   "ai_model": "openai/gpt-4o-mini",
   "default_crs": "EPSG:4326",
   "default_footprint": true,
+  "default_tiles3d": false,
   "default_report": true
 }
 ```
@@ -157,6 +175,7 @@ IFC File
   └─ Export
       ├─ Stripped IFC (.ifc) ─ structurally valid IFC with interiors removed
       ├─ Footprint (.geojson) ─ 2D outline with base_elevation and height
+      ├─ 3D Tiles (.glb + tileset.json) ─ CesiumJS-ready 3D Tiles 1.1 bundle
       └─ Report (.md) ─ extraction summary with provenance metadata
 ```
 
@@ -235,7 +254,8 @@ exterior_shell/
 │   └── vision.py       # Vision model API integration (OpenAI-compatible)
 ├── export/
 │   ├── stripped_ifc.py # Stripped IFC export (remove interior elements)
-│   └── footprint.py    # 2D footprint GeoJSON with elevation attributes
+│   ├── footprint.py    # 2D footprint GeoJSON with elevation attributes
+│   └── tiles3d.py      # 3D Tiles 1.1 export (pure Python GLB writer)
 └── utils/
     └── ...             # Geometry helpers, I/O utilities
 ```
@@ -248,15 +268,16 @@ This problem has been approached from different angles:
 - **IfcConvert** (`--exterior-only`): Open-source, extracts exterior shell as mesh. No structurally valid IFC output, no GIS attributes.
 - **Esri ExteriorShell**: Built into ArcGIS Pro. Automatic sublayer extraction when loading IFC/RVT. Often misses roofs, ground floors, and includes interior geometry.
 
-exterior-shell targets a narrower niche: GIS practitioners who need a clean stripped IFC plus a GeoJSON footprint with elevation attributes, with zero heavy GIS dependencies.
+exterior-shell targets a narrower niche: GIS practitioners who need a clean stripped IFC plus a GeoJSON footprint with elevation attributes, or a 3D Tiles bundle for web visualization, with zero heavy GIS dependencies.
 
 ## Roadmap
 
 - **v1.0** - Stripped IFC + 2D footprint output, rule-based extraction
 - **v1.3** - AI-assisted classification for ambiguous elements (multi-view rendering + vision API, BYOK)
 - **v1.4** - Batch processing, config file defaults, enriched info command
-- **v1.5** (current) - Provenance metadata: extraction parameters, contributing element IDs, spatial consistency validation
-- **v2.0** - Revit direct integration (.rvt), 3D Tiles export, LOD generation
+- **v1.5** - Provenance metadata: extraction parameters, contributing element IDs, spatial consistency validation
+- **v2.0** (current) - 3D Tiles 1.1 export: CesiumJS-ready GLB + tileset.json, pure Python, zero new dependencies
+- **v2.1** (planned) - LOD generation, Revit direct integration (.rvt)
 
 ## License
 

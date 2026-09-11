@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-09-04
+
+### Added
+
+- 3D Tiles 1.1 export (`--tiles3d`): produces `tileset.json` + `model.glb` for CesiumJS and web visualization
+- Pure Python GLB writer — zero new dependencies, handles coordinate transform (IFC Z-up to glTF Y-up), flat shading, PBR material
+- Works with both `extract` and `batch` commands
+- 25 new 3D Tiles tests (80 total)
+
 ## [1.5.0] - 2026-09-04
 
 ### Added

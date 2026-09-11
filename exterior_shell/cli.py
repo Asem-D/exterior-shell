@@ -18,6 +18,7 @@ from .core.assembler import assemble_shell, get_shell_stats
 from .core.models import Classification, ExtractionResult, ExtractionParams
 from .export.stripped_ifc import export_stripped_ifc
 from .export.footprint import export_footprint_geojson, write_extraction_report
+from .export.tiles3d import export_tiles3d
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -45,6 +46,7 @@ def _run_extract_pipeline(
     keep_interior: bool,
     no_stripped_ifc: bool,
     footprint: bool,
+    tiles3d: bool,
     json_stats: bool,
     verbose: bool,
 ) -> tuple[ExtractionResult, Optional[dict], Optional[dict], Optional[Path], Optional[Path], float, int]:
@@ -190,6 +192,31 @@ def _run_extract_pipeline(
         except Exception as exc:
             click.echo(f"  Footprint export failed: {exc}", err=True)
 
+    tiles3d_data = None
+    tiles3d_path = None
+    if tiles3d:
+        tiles3d_path = out_dir / f"{stem}_3dtiles"
+        click.echo(f"Exporting 3D Tiles to {tiles3d_path}...", err=True)
+        try:
+            tiles3d_data = export_tiles3d(
+                shell=shell,
+                output_dir=tiles3d_path,
+                crs=crs,
+            )
+            bbox = tiles3d_data["bounding_box"]
+            click.echo(
+                f"  {tiles3d_data['face_count']} faces, "
+                f"GLB: {tiles3d_data['glb_size'] / 1024:.1f} KB, "
+                f"tileset: {tiles3d_data['tileset_size'] / 1024:.1f} KB",
+                err=True,
+            )
+            click.echo(
+                f"  bbox min={bbox[0]} max={bbox[1]}",
+                err=True,
+            )
+        except Exception as exc:
+            click.echo(f"  3D Tiles export failed: {exc}", err=True)
+
     elapsed = time.time() - start_time
     input_size = input_path.stat().st_size
 
@@ -241,6 +268,10 @@ def _run_extract_pipeline(
         if footprint_path and footprint_path.exists()
         else 0
     )
+    tiles3d_size = (
+        tiles3d_data["glb_size"] + tiles3d_data["tileset_size"]
+        if tiles3d_data else 0
+    )
 
     click.echo("", err=True)
     click.echo(f"Done in {elapsed:.1f}s", err=True)
@@ -259,6 +290,12 @@ def _run_extract_pipeline(
         click.echo(
             f"Footprint:  {footprint_size / 1024:.1f} KB "
             f"({footprint_path.name})",
+            err=True,
+        )
+    if tiles3d_data and tiles3d_path:
+        click.echo(
+            f"3D Tiles:   {tiles3d_size / 1024:.1f} KB "
+            f"({tiles3d_path.name}/)",
             err=True,
         )
 
@@ -282,6 +319,12 @@ def _run_extract_pipeline(
             "shell": stats,
             "stripped_ifc": stripped_result,
             "footprint": {k: v for k, v in footprint_data.items() if k != "polygon"} if footprint_data else None,
+            "tiles3d": {k: v for k, v in tiles3d_data.items() if k != "bounding_box"} | {
+                "bounding_box": {
+                    "min": list(tiles3d_data["bounding_box"][0]),
+                    "max": list(tiles3d_data["bounding_box"][1]),
+                }
+            } if tiles3d_data else None,
             "params": params.to_dict(),
             "elapsed_seconds": round(elapsed, 2),
         }
@@ -378,6 +421,12 @@ def main():
     help="Also export a 2D building footprint GeoJSON with elevation attributes",
 )
 @click.option(
+    "--tiles3d",
+    is_flag=True,
+    default=None,
+    help="Export 3D Tiles (tileset.json + model.glb) for CesiumJS/web visualization",
+)
+@click.option(
     "--json-stats",
     is_flag=True,
     default=False,
@@ -396,6 +445,7 @@ def extract(
     keep_interior: bool | None,
     no_stripped_ifc: bool | None,
     footprint: bool | None,
+    tiles3d: bool | None,
     json_stats: bool,
 ):
     """Extract exterior shell from an IFC file.
@@ -416,6 +466,8 @@ def extract(
         cli_overrides["default_crs"] = crs
     if footprint is not None:
         cli_overrides["default_footprint"] = footprint
+    if tiles3d is not None:
+        cli_overrides["default_tiles3d"] = tiles3d
     if no_stripped_ifc is not None:
         cli_overrides["default_no_stripped_ifc"] = no_stripped_ifc
     if keep_interior is not None:
@@ -426,6 +478,7 @@ def extract(
 
     crs = resolved["default_crs"]
     footprint = bool(resolved["default_footprint"])
+    tiles3d = bool(resolved["default_tiles3d"])
     no_stripped_ifc = bool(resolved["default_no_stripped_ifc"])
     keep_interior = bool(resolved["default_keep_interior"])
     report = bool(resolved["default_report"])
@@ -442,6 +495,7 @@ def extract(
         keep_interior=keep_interior,
         no_stripped_ifc=no_stripped_ifc,
         footprint=footprint,
+        tiles3d=tiles3d,
         json_stats=json_stats,
         verbose=verbose,
     )
@@ -462,6 +516,7 @@ def extract(
 @click.option("--api-key", default=None, help="API key for AI classification.")
 @click.option("--ai-model", default=None, help="AI model name.")
 @click.option("--footprint", is_flag=True, default=None, help="Also export footprint GeoJSON.")
+@click.option("--tiles3d", is_flag=True, default=None, help="Also export 3D Tiles (tileset.json + model.glb).")
 @click.option("--no-stripped-ifc", is_flag=True, default=None, help="Skip stripped IFC export.")
 @click.option("--crs", default=None, help="Output CRS for footprint.")
 @click.option("--keep-interior", is_flag=True, default=None, help="Keep interior-facing faces.")
@@ -478,6 +533,7 @@ def batch(
     api_key: str | None,
     ai_model: str | None,
     footprint: bool | None,
+    tiles3d: bool | None,
     no_stripped_ifc: bool | None,
     crs: str | None,
     keep_interior: bool | None,
@@ -508,6 +564,8 @@ def batch(
         cli_overrides["default_crs"] = crs
     if footprint is not None:
         cli_overrides["default_footprint"] = footprint
+    if tiles3d is not None:
+        cli_overrides["default_tiles3d"] = tiles3d
     if no_stripped_ifc is not None:
         cli_overrides["default_no_stripped_ifc"] = no_stripped_ifc
     if keep_interior is not None:
@@ -515,6 +573,7 @@ def batch(
     resolved, _sources = resolve_config(cli_overrides)
     crs = resolved["default_crs"]
     footprint = bool(resolved["default_footprint"])
+    tiles3d = bool(resolved["default_tiles3d"])
     no_stripped_ifc = bool(resolved["default_no_stripped_ifc"])
     keep_interior = bool(resolved["default_keep_interior"])
     report = bool(resolved["default_report"]) and not no_report_flag
@@ -570,6 +629,7 @@ def batch(
                 keep_interior=keep_interior,
                 no_stripped_ifc=no_stripped_ifc,
                 footprint=footprint,
+                tiles3d=tiles3d,
                 json_stats=False,
                 verbose=verbose,
             )

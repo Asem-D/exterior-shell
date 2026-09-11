@@ -310,7 +310,7 @@ def test_extract_json_stats_includes_params(tmp_path: Path):
                 break
     data = json.loads(result.output[start:end])
     assert "params" in data
-    assert data["params"]["version"] == "1.5.0"
+    assert data["params"]["version"] == "2.0.0"
     assert data["params"]["crs"] == "EPSG:4326"
     assert data["params"]["ai_enabled"] is False
 
@@ -344,7 +344,7 @@ def test_report_includes_parameters(tmp_path: Path):
     content = report.read_text(encoding="utf-8")
     assert "Parameters:" in content
     assert "Version:" in content
-    assert "1.5.0" in content
+    assert "2.0.0" in content
 
 
 def test_report_includes_contributing_ids(tmp_path: Path):

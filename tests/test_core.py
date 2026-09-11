@@ -252,7 +252,7 @@ def test_extraction_params_defaults():
     """ExtractionParams has correct defaults."""
     from exterior_shell.core.models import ExtractionParams
     p = ExtractionParams()
-    assert p.version == "1.5.0"
+    assert p.version == "2.0.0"
     assert p.crs == "EPSG:4326"
     assert p.ai_enabled is False
     assert p.classification_mode == "rule_based"
@@ -274,7 +274,7 @@ def test_extraction_params_summary():
     from exterior_shell.core.models import ExtractionParams
     p = ExtractionParams(ai_enabled=True, ai_model="gpt-4o")
     s = p.summary()
-    assert "1.5.0" in s
+    assert "2.0.0" in s
     assert "EPSG:4326" in s
     assert "gpt-4o" in s
 
@@ -301,4 +301,4 @@ def test_extraction_result_has_params():
     from exterior_shell.core.models import ExtractionResult, ExtractionParams
     result = ExtractionResult()
     assert isinstance(result.params, ExtractionParams)
-    assert result.params.version == "1.5.0"
+    assert result.params.version == "2.0.0"
