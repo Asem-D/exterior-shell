@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-09-12
+
+### Fixed
+
+- **3D Tiles exported in wrong positions**: ifcopenshell returns LOCAL coordinates by default; the parser now enables `USE_WORLD_COORDS` so every element lands at its real building position (previously all elements stacked near the origin)
+- **GLB failed to load in viewers**: bufferView byteOffsets now match the actual binary layout, and indices are local to each primitive's own vertex buffer
+- **Stripped IFC crashed the geometry engine**: relationships referencing removed products (voids, fills, connections) are now deleted, eliminating Blank-reference errors
+- Entity identity now uses IFC entity `.id()` instead of Python `id()` (wrapper objects are recreated per access)
+
+### Added
+
+- IFC surface color extraction: GLB materials now carry per-element colors from IfcStyledItem styles
+- `IfcFooting` classified exterior (foundation), `IfcOpeningElement` classified interior (boolean voids)
+- `--tiles3d` rebuilds the tileset from the stripped IFC when present, so 3D Tiles exactly match the stripped output
+
 ## [2.0.0] - 2026-09-04
 
 ### Added

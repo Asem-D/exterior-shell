@@ -11,6 +11,7 @@ build/
 *.geojson
 .env
 *.report.md
+demo_3dtiles/
 create_test_ifc.py
 _take_screenshot.py
 _gen_screenshot.py

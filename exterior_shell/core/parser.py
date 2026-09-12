@@ -14,6 +14,77 @@ from .models import Element, ElementType, Face
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_color_map(file: ifcopenshell.file) -> dict[int, tuple[float, float, float]]:
+    """Extract surface colors from IFC styled items.
+
+    Maps product entity IDs to (R, G, B) colors by tracing:
+    IfcStyledItem -> IfcRepresentationItem -> IfcRepresentation
+    -> IfcProductDefinitionShape -> IfcProduct
+
+    Returns:
+        Dict mapping product ID to (R, G, B) tuple with values 0.0-1.0.
+    """
+    color_map: dict[int, tuple[float, float, float]] = {}
+
+    # Build: IfcRepresentationItem -> list of (R, G, B) colors
+    item_colors: dict[int, list[tuple[float, float, float]]] = {}
+
+    for styled_item in file.by_type("IfcStyledItem"):
+        if styled_item.Item is None:
+            continue
+
+        item_id = styled_item.Item.id()
+
+        # Walk through style assignments to find surface colors
+        for style_assignment in (styled_item.Styles or []):
+            if not style_assignment.is_a("IfcPresentationStyleAssignment"):
+                continue
+            for style in (style_assignment.Styles or []):
+                if not style.is_a("IfcSurfaceStyle"):
+                    continue
+                for rendering in (style.Styles or []):
+                    if rendering.is_a("IfcSurfaceStyleRendering") and rendering.SurfaceColour:
+                        c = rendering.SurfaceColour
+                        color = (c.Red, c.Green, c.Blue)
+                        item_colors.setdefault(item_id, []).append(color)
+
+    if not item_colors:
+        return color_map
+
+    # Build: IfcRepresentation -> product ID
+    rep_to_product: dict[int, int] = {}
+    for pds in file.by_type("IfcProductDefinitionShape"):
+        for rep in (pds.Representations or []):
+            rep_to_product[rep.id()] = pds.id()
+
+    # Build: product ID -> IfcProduct entity ID
+    product_pds: dict[int, int] = {}
+    for product in file.by_type("IfcProduct"):
+        if product.Representation:
+            product_pds[product.Representation.id()] = product.id()
+
+    # Map representation items -> colors -> products
+    for rep_item in file.by_type("IfcRepresentation"):
+        rep_id = rep_item.id()
+        if rep_id not in rep_to_product:
+            continue
+        pds_id = rep_to_product[rep_id]
+        if pds_id not in product_pds:
+            continue
+        prod_id = product_pds[pds_id]
+
+        # Get colors for items in this representation
+        for item in (rep_item.Items or []):
+            item_id = item.id()
+            if item_id in item_colors:
+                # Use the first color found for this item
+                color_map[prod_id] = item_colors[item_id][0]
+                break
+
+    logger.debug(f"Extracted colors for {len(color_map)} products")
+    return color_map
+
 # Mapping from IFC type strings to our ElementType enum
 IFC_TYPE_MAP: dict[str, ElementType] = {
     "IfcWall": ElementType.WALL,
@@ -38,6 +109,7 @@ IFC_TYPE_MAP: dict[str, ElementType] = {
     "IfcFurnishingElement": ElementType.FURNISHING,
     "IfcChimney": ElementType.CHIMNEY,
     "IfcPile": ElementType.PILE,
+    "IfcFooting": ElementType.FOOTING,
     "IfcOpeningElement": ElementType.OPENING_ELEMENT,
     "IfcBuildingElementProxy": ElementType.BUILDING_ELEMENT_PROXY,
     "IfcController": ElementType.CONTROLLER,
@@ -158,8 +230,16 @@ def parse_ifc(file_path: str | Path) -> list[Element]:
     logger.info(f"Parsing IFC file: {file_path}")
     file = ifcopenshell.open(str(file_path))
 
-    # Set up geometry engine
+    # Set up geometry engine.
+    # USE_WORLD_COORDS is REQUIRED: by default ifcopenshell returns geometry
+    # in each element's LOCAL frame (relative to its ObjectPlacement), which
+    # stacks all elements near the origin and destroys their real positions.
+    # World coords put every element where it belongs in the building.
     geom_settings = ifcopenshell.geom.settings()
+    geom_settings.set(geom_settings.USE_WORLD_COORDS, True)
+
+    # Extract material colors
+    color_map = _extract_color_map(file)
 
     elements = []
 
@@ -190,6 +270,9 @@ def parse_ifc(file_path: str | Path) -> list[Element]:
         # Get predefined type
         predefined_type = _get_predefined_type(product)
 
+        # Get color from IFC material
+        color = color_map.get(product.id())
+
         element = Element(
             global_id=global_id,
             name=str(name),
@@ -200,7 +283,13 @@ def parse_ifc(file_path: str | Path) -> list[Element]:
             bbox_max=bbox_max,
             storey=storey,
             predefined_type=predefined_type,
+            color=color,
         )
+
+        # Set color on all faces from this element
+        if color is not None:
+            for face in element.faces:
+                face.color = color
 
         elements.append(element)
 

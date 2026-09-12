@@ -165,23 +165,87 @@ def export_stripped_ifc(
         if product.GlobalId:
             products_by_gid[product.GlobalId] = product
 
-    # Remove interior products
-    removed_count = 0
-    kept_count = 0
+    # Collect products to remove
+    products_to_remove = []
     for gid in interior_global_ids:
         product = products_by_gid.get(gid)
-        if product is None:
+        if product is not None:
+            products_to_remove.append(product)
+        else:
             logger.warning("Interior element GlobalId %s not found in IFC", gid)
-            continue
-        product_name = product.Name or gid
-        try:
-            ifcopenshell.api.run("root.remove_product", model, product=product)
-            removed_count += 1
-            logger.debug("Removed %s (%s)", gid, product_name)
-        except Exception as exc:
-            logger.warning("Failed to remove %s: %s", gid, exc)
 
-    # Count kept products
+    # IMPORTANT: use IFC entity ids (stable), NOT Python id() — ifcopenshell
+    # creates a new wrapper object per attribute access, so Python id() never
+    # matches across lookups.
+    remove_ids = {p.id() for p in products_to_remove}
+
+    # Step 1: Detach from spatial containment (fast batch)
+    for rel in model.by_type("IfcRelContainedInSpatialStructure"):
+        related = list(rel.RelatedElements or [])
+        keep = [e for e in related if e.id() not in remove_ids]
+        if len(keep) != len(related):
+            rel.RelatedElements = keep
+
+    # Step 2: Clean decomposition relationships referencing these products.
+    # If the RelatingObject (parent) was removed, drop the whole relationship
+    # (children become standalone). Otherwise filter removed children out.
+    for rel_type in ("IfcRelDecomposes", "IfcRelNests", "IfcRelAggregates"):
+        for rel in model.by_type(rel_type):
+            try:
+                if rel.RelatingObject is not None and rel.RelatingObject.id() in remove_ids:
+                    model.remove(rel)
+                    continue
+                objs = list(rel.RelatedObjects or [])
+                keep = [o for o in objs if o.id() not in remove_ids]
+                if len(keep) != len(objs):
+                    rel.RelatedObjects = keep
+            except Exception:
+                pass
+
+    # Step 2.5: Remove relationships that reference removed products
+    # (voids, fills, connections, boundaries). If left behind, they hold
+    # Blank references after model.remove() and break the geometry engine
+    # ("Type held at index N is class Blank"). Removing the relationship
+    # is correct: a kept wall with a removed opening simply becomes solid.
+    rels_to_delete = []
+    skip_types = ("IfcRelContainedInSpatialStructure", "IfcRelAggregates",
+                  "IfcRelNests", "IfcRelDecomposes")
+    for rel in model.by_type("IfcRelationship"):
+        if any(rel.is_a(t) for t in skip_types):
+            continue  # already filtered above
+        try:
+            for attr_value in rel:
+                if attr_value is None:
+                    continue
+                if isinstance(attr_value, (list, tuple)):
+                    if any(getattr(e, "id", lambda: -1)() in remove_ids
+                           for e in attr_value):
+                        rels_to_delete.append(rel.id())
+                        break
+                elif (hasattr(attr_value, "id")
+                      and attr_value.id() in remove_ids):
+                    rels_to_delete.append(rel.id())
+                    break
+        except Exception:
+            continue
+
+    for rel_id in rels_to_delete:
+        try:
+            model.remove(model.by_id(rel_id))
+        except Exception:
+            pass
+    logger.info("Removed %d relationships referencing interior products",
+                len(rels_to_delete))
+
+    # Step 3: Remove the products themselves (model.remove is fast)
+    removed_count = 0
+    for product in products_to_remove:
+        try:
+            model.remove(product)
+            removed_count += 1
+        except Exception:
+            pass
+
     kept_count = len(model.by_type("IfcProduct"))
 
     # Clean up orphaned entities

@@ -27,6 +27,7 @@ EXTERIOR_TYPES: set[ElementType] = {
     ElementType.DOOR_CASE,
     ElementType.CURTAIN_WALL,
     ElementType.CHIMNEY,
+    ElementType.FOOTING,       # foundation is exterior
 }
 
 # Elements that are ALWAYS interior (stripped from output)
@@ -44,6 +45,7 @@ INTERIOR_TYPES: set[ElementType] = {
     ElementType.FLOW_CONTROLLER,
     ElementType.BUILDING_SYSTEM,
     ElementType.PROXY,
+    ElementType.OPENING_ELEMENT,  # voids for doors/windows, not solid geometry
     ElementType.UNKNOWN,
 }
 

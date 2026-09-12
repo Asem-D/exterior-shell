@@ -196,10 +196,37 @@ def _run_extract_pipeline(
     tiles3d_path = None
     if tiles3d:
         tiles3d_path = out_dir / f"{stem}_3dtiles"
+        # When a stripped IFC was generated, build 3D Tiles from it so
+        # the tileset geometry exactly matches the stripped IFC.
+        tiles3d_shell = shell
+        if stripped_result and stripped_output.exists():
+            click.echo(
+                "Rebuilding 3D Tiles from stripped IFC (no face removal)...",
+                err=True,
+            )
+            try:
+                stripped_elements = parse_ifc(stripped_output)
+                # All elements in stripped IFC are already exterior
+                tiles3d_shell = assemble_shell(
+                    stripped_elements,
+                    remove_interior_faces=False,
+                )
+                ts = get_shell_stats(tiles3d_shell)
+                click.echo(
+                    f"  Stripped shell: {ts['face_count']} faces "
+                    f"from {ts['element_count']} elements",
+                    err=True,
+                )
+            except Exception as exc:
+                click.echo(
+                    f"  Warning: could not rebuild from stripped IFC ({exc}), "
+                    f"using original shell",
+                    err=True,
+                )
         click.echo(f"Exporting 3D Tiles to {tiles3d_path}...", err=True)
         try:
             tiles3d_data = export_tiles3d(
-                shell=shell,
+                shell=tiles3d_shell,
                 output_dir=tiles3d_path,
                 crs=crs,
             )

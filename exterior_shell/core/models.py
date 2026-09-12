@@ -30,6 +30,7 @@ class ElementType(Enum):
     FURNISHING = "IfcFurnishingElement"
     CHIMNEY = "IfcChimney"
     PILE = "IfcPile"
+    FOOTING = "IfcFooting"
     DOOR_CASE = "IfcDoorCase"
     WINDOW_CASE = "IfcWindowCase"
     OPENING_ELEMENT = "IfcOpeningElement"
@@ -66,6 +67,7 @@ class Face:
     """A single triangular face with vertices and normal."""
     vertices: np.ndarray  # (3, 3) array of triangle vertices
     normal: np.ndarray    # (3,) normal vector
+    color: Optional[tuple[float, float, float]] = None  # (R, G, B) 0.0-1.0
 
 
 @dataclass
@@ -83,6 +85,7 @@ class Element:
     classification: Classification = Classification.AMBIGUOUS
     classification_source: ClassificationSource = ClassificationSource.RULE_BASED
     confidence: float = 0.0
+    color: Optional[tuple[float, float, float]] = None  # (R, G, B) 0.0-1.0
 
     @property
     def face_count(self) -> int:

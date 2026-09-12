@@ -98,55 +98,171 @@ def _compute_bounding_box(
 def _build_glb(faces: list[Face]) -> tuple[bytes, tuple[tuple[float, float, float], tuple[float, float, float]]]:
     """Build a glTF 2.0 GLB binary from a list of faces.
 
+    Supports per-face colors: faces with the same color are grouped into
+    separate primitives with distinct materials. Faces without a color use
+    a default light-gray material.
+
     Flat shading: each triangle owns its 3 vertices with a duplicated face
     normal — no vertex sharing across triangles.
 
     Returns:
         (glb_bytes, (bbox_min, bbox_max)) in glTF (Y-up) coordinates.
     """
-    n_faces = len(faces)
+    # Group faces by color
+    color_groups: dict[tuple[float, float, float] | None, list[int]] = {}
+    for i, face in enumerate(faces):
+        key = face.color
+        color_groups.setdefault(key, []).append(i)
 
-    # Build interleaved binary buffers: positions + normals, then indices.
-    pos_bytes = bytearray()
-    norm_bytes = bytearray()
+    if not color_groups:
+        # Empty shell: emit a valid but empty GLB.
+        empty_json = json.dumps({"asset": {"version": "2.0"}}).encode("utf-8")
+        json_pad = (4 - (len(empty_json) % 4)) % 4
+        empty_json += b" " * json_pad
+        out = struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(empty_json))
+        out += struct.pack("<II", len(empty_json), 0x4E4F534A)
+        out += empty_json
+        zeros = (0.0, 0.0, 0.0)
+        return bytes(out), (zeros, zeros)
 
-    positions_yup = np.zeros((n_faces * 3, 3), dtype=np.float32)
+    # Build materials list
+    default_color = (0.85, 0.85, 0.85)
+    materials = []
+    material_map = {}  # color -> material index
+    for color_key in color_groups:
+        if color_key is None:
+            color_key = default_color
+        if color_key not in material_map:
+            material_map[color_key] = len(materials)
+            materials.append({
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [color_key[0], color_key[1], color_key[2], 1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.9,
+                }
+            })
 
-    for face_idx, face in enumerate(faces):
-        verts = face.vertices  # (3, 3) float64 in IFC Z-up
-        n = face.normal        # (3,) float64 in IFC Z-up
+    # Build per-group interleaved binary buffer: each color group appends
+    # [positions | normals | indices] contiguously, matching the bufferView
+    # offsets computed below (pos @ offset, norm @ offset+pos_len, idx @
+    # offset+pos_len+norm_len).
+    all_buffer_views = []
+    all_primitives = []
+    all_accessors = []
 
-        for v_idx in range(3):
-            x, y, z = float(verts[v_idx, 0]), float(verts[v_idx, 1]), float(verts[v_idx, 2])
-            gx, gy, gz = _transform_vertex(x, y, z)
-            nx, ny, nz = _transform_vertex(float(n[0]), float(n[1]), float(n[2]))
-            # Write position
-            pos_bytes += struct.pack("<fff", gx, gy, gz)
-            positions_yup[face_idx * 3 + v_idx] = (gx, gy, gz)
-            # Normal (duplicated for every vertex of the triangle)
-            norm_bytes += struct.pack("<fff", nx, ny, nz)
+    bin_data = bytearray()
 
-    n_verts = n_faces * 3
-    n_indices = n_faces * 3
+    positions_yup_all = []
+    current_offset = 0
+    current_idx_offset = 0
 
-    pos_byte_length = n_verts * 12
-    norm_byte_length = n_verts * 12
-    idx_byte_offset = pos_byte_length + norm_byte_length
+    for color_key, face_indices in color_groups.items():
+        mat_color = color_key if color_key else default_color
+        mat_idx = material_map[mat_color]
 
-    # Indices are just 0..n_indices-1 because vertices are not shared.
-    idx_array = np.arange(n_indices, dtype=np.uint32)
-    idx_bytes = idx_array.tobytes()
-    idx_byte_length = len(idx_bytes)
+        group_pos = bytearray()
+        group_norm = bytearray()
+        group_positions = np.zeros((len(face_indices) * 3, 3), dtype=np.float32)
 
-    bin_data = bytes(pos_bytes) + bytes(norm_bytes) + idx_bytes
+        for local_idx, face_idx in enumerate(face_indices):
+            face = faces[face_idx]
+            verts = face.vertices
+            n = face.normal
+
+            for v_idx in range(3):
+                x, y, z = float(verts[v_idx, 0]), float(verts[v_idx, 1]), float(verts[v_idx, 2])
+                gx, gy, gz = _transform_vertex(x, y, z)
+                nx, ny, nz = _transform_vertex(float(n[0]), float(n[1]), float(n[2]))
+                group_pos += struct.pack("<fff", gx, gy, gz)
+                group_norm += struct.pack("<fff", nx, ny, nz)
+                group_positions[local_idx * 3 + v_idx] = (gx, gy, gz)
+
+        positions_yup_all.append(group_positions)
+
+        n_group_verts = len(face_indices) * 3
+        n_group_indices = len(face_indices) * 3
+
+        pos_byte_length = len(group_pos)
+        norm_byte_length = len(group_norm)
+        idx_byte_length = n_group_indices * 4  # uint32
+
+        # Buffer views for this group
+        pos_bv_idx = len(all_buffer_views)
+        all_buffer_views.append({
+            "buffer": 0,
+            "byteOffset": current_offset,
+            "byteLength": pos_byte_length,
+            "target": 34962,  # ARRAY_BUFFER
+        })
+
+        norm_bv_idx = len(all_buffer_views)
+        all_buffer_views.append({
+            "buffer": 0,
+            "byteOffset": current_offset + pos_byte_length,
+            "byteLength": norm_byte_length,
+            "target": 34962,
+        })
+
+        idx_bv_idx = len(all_buffer_views)
+        all_buffer_views.append({
+            "buffer": 0,
+            "byteOffset": current_offset + pos_byte_length + norm_byte_length,
+            "byteLength": idx_byte_length,
+            "target": 34963,  # ELEMENT_ARRAY_BUFFER
+        })
+
+        # Accessors for this group
+        pos_acc_idx = len(all_accessors)
+        all_accessors.append({
+            "bufferView": pos_bv_idx,
+            "componentType": 5126,  # FLOAT
+            "count": n_group_verts,
+            "type": "VEC3",
+        })
+
+        norm_acc_idx = len(all_accessors)
+        all_accessors.append({
+            "bufferView": norm_bv_idx,
+            "componentType": 5126,
+            "count": n_group_verts,
+            "type": "VEC3",
+        })
+
+        idx_acc_idx = len(all_accessors)
+        all_accessors.append({
+            "bufferView": idx_bv_idx,
+            "componentType": 5125,  # UNSIGNED_INT
+            "count": n_group_indices,
+            "type": "SCALAR",
+        })
+
+        # Primitive for this group
+        prim_idx = len(all_primitives)
+        all_primitives.append({
+            "attributes": {"POSITION": pos_acc_idx, "NORMAL": norm_acc_idx},
+            "indices": idx_acc_idx,
+            "material": mat_idx,
+            "mode": 4,
+        })
+
+        # Append this group's [pos | norm | idx] block to the binary buffer.
+        bin_data += group_pos
+        bin_data += group_norm
+        # glTF indices are LOCAL to each primitive's own vertex buffer,
+        # so every group restarts at 0.
+        group_idx = np.arange(n_group_indices, dtype=np.uint32)
+        bin_data += group_idx.tobytes()
+
+        current_offset += pos_byte_length + norm_byte_length + idx_byte_length
+
+    # Compute global bounding box
+    all_positions = np.vstack(positions_yup_all)
+    bbox_min, bbox_max = _compute_bounding_box(all_positions)
+
+    # Pad alignment
     bin_byte_length = len(bin_data)
-
-    # Pad binary chunk to 4-byte alignment with zero bytes.
     bin_pad = (4 - (bin_byte_length % 4)) % 4
     bin_data_padded = bin_data + (b"\x00" * bin_pad)
-
-    # Bounding box in glTF (Y-up) coordinates.
-    bbox_min, bbox_max = _compute_bounding_box(positions_yup)
 
     gltf_json: dict[str, Any] = {
         "asset": {"version": "2.0"},
@@ -155,67 +271,12 @@ def _build_glb(faces: list[Face]) -> tuple[bytes, tuple[tuple[float, float, floa
         "nodes": [{"mesh": 0}],
         "meshes": [
             {
-                "primitives": [
-                    {
-                        "attributes": {"POSITION": 0, "NORMAL": 1},
-                        "indices": 2,
-                        "material": 0,
-                        "mode": 4,
-                    }
-                ]
+                "primitives": all_primitives,
             }
         ],
-        "materials": [
-            {
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [0.85, 0.85, 0.85, 1.0],
-                    "metallicFactor": 0.0,
-                    "roughnessFactor": 0.9,
-                }
-            }
-        ],
-        "accessors": [
-            {
-                "bufferView": 0,
-                "componentType": 5126,  # FLOAT
-                "count": n_verts,
-                "type": "VEC3",
-                "min": list(bbox_min),
-                "max": list(bbox_max),
-            },
-            {
-                "bufferView": 1,
-                "componentType": 5126,
-                "count": n_verts,
-                "type": "VEC3",
-            },
-            {
-                "bufferView": 2,
-                "componentType": 5125,  # UNSIGNED_INT
-                "count": n_indices,
-                "type": "SCALAR",
-            },
-        ],
-        "bufferViews": [
-            {
-                "buffer": 0,
-                "byteOffset": 0,
-                "byteLength": pos_byte_length,
-                "target": 34962,  # ARRAY_BUFFER
-            },
-            {
-                "buffer": 0,
-                "byteOffset": pos_byte_length,
-                "byteLength": norm_byte_length,
-                "target": 34962,
-            },
-            {
-                "buffer": 0,
-                "byteOffset": idx_byte_offset,
-                "byteLength": idx_byte_length,
-                "target": 34963,  # ELEMENT_ARRAY_BUFFER
-            },
-        ],
+        "materials": materials,
+        "accessors": all_accessors,
+        "bufferViews": all_buffer_views,
         "buffers": [{"byteLength": bin_byte_length}],
     }
 
