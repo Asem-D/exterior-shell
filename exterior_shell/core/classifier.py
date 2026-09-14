@@ -28,12 +28,18 @@ EXTERIOR_TYPES: set[ElementType] = {
     ElementType.CURTAIN_WALL,
     ElementType.CHIMNEY,
     ElementType.FOOTING,       # foundation is exterior
+    # Spatial structure containers: never physical geometry, but they anchor
+    # the Project → Site → Building → Storey hierarchy that every IFC viewer
+    # requires. Classifying them interior (or unknown → interior) and stripping
+    # them breaks the file for strict viewers (BIMvision, BIMcollab).
+    ElementType.SITE,
+    ElementType.BUILDING,
+    ElementType.BUILDING_STOREY,
 }
 
 # Elements that are ALWAYS interior (stripped from output)
 INTERIOR_TYPES: set[ElementType] = {
     ElementType.SPACE,
-    ElementType.BUILDING_STOREY,
     ElementType.FURNISHING,
     ElementType.COVERING,
     ElementType.MEMBER,      # interior framing

@@ -20,35 +20,92 @@ from ..core.models import Classification, Element
 logger = logging.getLogger(__name__)
 
 
-def _remove_orphaned_representations(model: ifcopenshell.file) -> int:
-    """Remove IfcRepresentation entities with no remaining products.
+def _child_representations(entity) -> list:
+    """Child representations of a shape or representation entity.
 
-    Returns the count of removed representations.
+    IfcProductDefinitionShape uses 'Items' (IFC2X3/IFC4) or 'Representations'
+    (IFC4X3); IfcShapeRepresentation always uses 'Items'.
     """
-    # Collect IDs first to avoid modifying during iteration
-    orphan_ids = []
+    for attr in ("Items", "Representations"):
+        try:
+            children = getattr(entity, attr, None)
+        except Exception:
+            children = None
+        if children:
+            return list(children)
+    return []
+
+
+def _remove_orphaned_representations(model: ifcopenshell.file) -> int:
+    """Remove representation-tree entities no product references anymore.
+
+    Covers IfcRepresentation subtypes and IfcProductDefinitionShape (which is
+    NOT an IfcRepresentation subtype in IFC4/IFC4X3, so a plain
+    by_type("IfcRepresentation") scan misses it). Orphaned shapes are
+    cascaded: their sub-representations and geometry items are removed too,
+    unless still referenced by a surviving owner.
+
+    Returns the count of removed roots (shapes + representations).
+    """
+    # 1. Orphaned roots: zero inverses means no product/map/aspect references.
+    orphan_ids = set()
     for rep in model.by_type("IfcRepresentation"):
         try:
             if model.get_total_inverses(rep) == 0:
-                orphan_ids.append(rep.id())
+                orphan_ids.add(rep.id())
+        except Exception:
+            continue
+    for shape in model.by_type("IfcProductDefinitionShape"):
+        try:
+            if model.get_total_inverses(shape) == 0:
+                orphan_ids.add(shape.id())
+        except Exception:
+            continue
+    if not orphan_ids:
+        return 0
+
+    # 2. Sub-representations owned by a SURVIVING shape/map/aspect must stay.
+    owned_subrep_ids = set()
+    for shape in model.by_type("IfcProductDefinitionShape"):
+        if shape.id() in orphan_ids:
+            continue
+        for child in _child_representations(shape):
+            owned_subrep_ids.add(child.id())
+    for rep_map in model.by_type("IfcRepresentationMap"):
+        try:
+            owned_subrep_ids.add(rep_map.MappedRepresentation.id())
+        except Exception:
+            continue
+    for aspect in model.by_type("IfcShapeAspect"):
+        try:
+            for rep in aspect.Representations or []:
+                owned_subrep_ids.add(rep.id())
         except Exception:
             continue
 
+    # 3. Cascade each orphan: delete sub-reps not owned elsewhere, then
+    #    geometry items with no remaining inverses (keeps shared geometry).
     removed = 0
-    for rid in orphan_ids:
+    for rid in sorted(orphan_ids):
         try:
-            rep = model.by_id(rid)
-            # Also remove orphaned items
+            root = model.by_id(rid)
+        except Exception:
+            continue
+        stack = _child_representations(root)
+        while stack:
+            child = stack.pop()
             try:
-                for item in rep.Items or []:
-                    try:
-                        if model.get_total_inverses(item) == 0:
-                            model.remove(item)
-                    except Exception:
-                        pass
+                if child.is_a("IfcRepresentation"):
+                    if child.id() in owned_subrep_ids:
+                        continue  # shared with a surviving owner
+                    stack.extend(_child_representations(child))
+                    model.remove(child)
+                elif model.get_total_inverses(child) == 0:
+                    model.remove(child)
             except Exception:
-                pass
-            model.remove(rep)
+                continue
+        try:
+            model.remove(root)
             removed += 1
         except Exception:
             continue
@@ -174,23 +231,96 @@ def export_stripped_ifc(
         else:
             logger.warning("Interior element GlobalId %s not found in IFC", gid)
 
+    # Spatial structure anchors are never removed, even if classified interior
+    # (e.g. by AI or a custom rule): IfcProject → IfcSite → IfcBuilding →
+    # IfcBuildingStorey is the hierarchy every IFC viewer requires. Stripping
+    # any of them leaves dangling containment relations and empty aggregations,
+    # which strict viewers (BIMvision, BIMcollab) reject on load.
+    spatial_anchors = [
+        p for p in products_to_remove
+        if p.is_a("IfcSite") or p.is_a("IfcBuilding") or p.is_a("IfcBuildingStorey")
+    ]
+    if spatial_anchors:
+        logger.info(
+            "Keeping %d spatial structure elements (never stripped)",
+            len(spatial_anchors),
+        )
+        protected_ids = {p.id() for p in spatial_anchors}
+        products_to_remove = [
+            p for p in products_to_remove if p.id() not in protected_ids
+        ]
+
     # IMPORTANT: use IFC entity ids (stable), NOT Python id() — ifcopenshell
     # creates a new wrapper object per attribute access, so Python id() never
     # matches across lookups.
     remove_ids = {p.id() for p in products_to_remove}
 
-    # Step 1: Detach from spatial containment (fast batch)
+    # Capture each removed container's parent so elements contained in a
+    # removed IfcSpace can be reassigned to the nearest surviving ancestor.
+    parent_of: dict[int, ifcopenshell.entity_instance] = {}
+    for rel in model.by_type("IfcRelAggregates"):
+        for child in rel.RelatedObjects or []:
+            if child.id() in remove_ids:
+                parent_of[child.id()] = rel.RelatingObject
+
+    def _surviving_ancestor(removed_id: int):
+        """Walk up the aggregation chain to the nearest container that survives."""
+        seen: set[int] = set()
+        current = parent_of.get(removed_id)
+        while current is not None and current.id() not in seen:
+            if current.id() not in remove_ids:
+                return current
+            seen.add(current.id())
+            current = parent_of.get(current.id())
+        return None
+
+    # Step 1: Fix spatial containment (IfcRelContainedInSpatialStructure).
+    # - Filter removed elements out of RelatedElements.
+    # - If the RelatingStructure was removed (e.g. an IfcSpace), reassign the
+    #   relation to the nearest surviving ancestor so kept elements stay
+    #   contained; drop the relation if there is none.
+    # - Drop relations left with no elements (RelatedElements is SET [1:?]).
+    orphaned_elements = 0
+    empty_containment_ids = []
     for rel in model.by_type("IfcRelContainedInSpatialStructure"):
         related = list(rel.RelatedElements or [])
         keep = [e for e in related if e.id() not in remove_ids]
-        if len(keep) != len(related):
-            rel.RelatedElements = keep
+        structure = rel.RelatingStructure
+        if structure is not None and structure.id() in remove_ids:
+            target = _surviving_ancestor(structure.id())
+            if target is not None and keep:
+                rel.RelatingStructure = target
+                rel.RelatedElements = keep
+            else:
+                orphaned_elements += len(keep)
+                empty_containment_ids.append(rel.id())
+        elif len(keep) != len(related):
+            if keep:
+                rel.RelatedElements = keep
+            else:
+                empty_containment_ids.append(rel.id())
+    for rel_id in empty_containment_ids:
+        try:
+            model.remove(model.by_id(rel_id))
+        except Exception:
+            pass
+    if orphaned_elements:
+        logger.warning(
+            "%d kept elements lost spatial containment (no surviving ancestor)",
+            orphaned_elements,
+        )
 
     # Step 2: Clean decomposition relationships referencing these products.
     # If the RelatingObject (parent) was removed, drop the whole relationship
-    # (children become standalone). Otherwise filter removed children out.
+    # (children become standalone). Otherwise filter removed children out;
+    # drop the relationship if nothing remains (empty sets are invalid IFC).
+    # Note: in IFC4X3 IfcRelDecomposes is abstract and by_type also matches
+    # IfcRelVoidsElement, which has no RelatingObject/RelatedObjects — skip it
+    # here (voids are deleted in step 2.5).
     for rel_type in ("IfcRelDecomposes", "IfcRelNests", "IfcRelAggregates"):
         for rel in model.by_type(rel_type):
+            if not (hasattr(rel, "RelatingObject") and hasattr(rel, "RelatedObjects")):
+                continue
             try:
                 if rel.RelatingObject is not None and rel.RelatingObject.id() in remove_ids:
                     model.remove(rel)
@@ -198,7 +328,10 @@ def export_stripped_ifc(
                 objs = list(rel.RelatedObjects or [])
                 keep = [o for o in objs if o.id() not in remove_ids]
                 if len(keep) != len(objs):
-                    rel.RelatedObjects = keep
+                    if keep:
+                        rel.RelatedObjects = keep
+                    else:
+                        model.remove(rel)
             except Exception:
                 pass
 
@@ -207,9 +340,12 @@ def export_stripped_ifc(
     # Blank references after model.remove() and break the geometry engine
     # ("Type held at index N is class Blank"). Removing the relationship
     # is correct: a kept wall with a removed opening simply becomes solid.
+    # Note: do NOT skip IfcRelDecomposes here — in IFC4X3 it is abstract and
+    # is_a("IfcRelDecomposes") also matches IfcRelVoidsElement, which would
+    # silently keep void relations with dangling opening references.
     rels_to_delete = []
     skip_types = ("IfcRelContainedInSpatialStructure", "IfcRelAggregates",
-                  "IfcRelNests", "IfcRelDecomposes")
+                  "IfcRelNests")
     for rel in model.by_type("IfcRelationship"):
         if any(rel.is_a(t) for t in skip_types):
             continue  # already filtered above
@@ -253,9 +389,21 @@ def export_stripped_ifc(
     orphaned_ctx = _remove_orphaned_contexts(model)
     orphaned_hist = _remove_orphaned_owner_history(model)
 
+    # Drop presentation layer assignments left with no items
+    # (AssignedItems is SET [1:?]; an empty assignment is invalid IFC).
+    empty_layers = 0
+    for layer in model.by_type("IfcPresentationLayerAssignment"):
+        if not (layer.AssignedItems or []):
+            try:
+                model.remove(layer)
+                empty_layers += 1
+            except Exception:
+                pass
+
     logger.info(
-        "Orphan cleanup: %d representations, %d contexts, %d owner histories",
-        orphaned_reps, orphaned_ctx, orphaned_hist,
+        "Orphan cleanup: %d representations, %d contexts, %d owner histories, "
+        "%d empty layer assignments",
+        orphaned_reps, orphaned_ctx, orphaned_hist, empty_layers,
     )
 
     # Write the stripped file

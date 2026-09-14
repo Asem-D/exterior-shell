@@ -27,6 +27,8 @@ class ElementType(Enum):
     COVERING = "IfcCovering"
     SPACE = "IfcSpace"
     BUILDING_STOREY = "IfcBuildingStorey"
+    SITE = "IfcSite"
+    BUILDING = "IfcBuilding"
     FURNISHING = "IfcFurnishingElement"
     CHIMNEY = "IfcChimney"
     PILE = "IfcPile"

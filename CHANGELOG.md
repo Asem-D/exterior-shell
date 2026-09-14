@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-09-14
+
+### Fixed
+
+- **Stripped IFC rejected by BIMvision/BIMcollab**: the spatial structure (IfcSite, IfcBuilding, IfcBuildingStorey) was classified interior and removed, leaving a broken Project→Site→Building→Storey hierarchy, empty aggregations, and containment relations with dangling structure references. Spatial anchors are now never stripped, and elements contained in a removed IfcSpace are reassigned to its parent storey
+- **Dangling void references (IFC4X3)**: `IfcRelVoidsElement` is a subtype of the abstract `IfcRelDecomposes` in IFC4X3, so the relationship cleanup skipped it by mistake; void relations survived with `$` opening references (schema violation). Void relations are now deleted like any other relationship referencing a removed product
+- **Orphaned geometry left behind**: `IfcProductDefinitionShape` is not an `IfcRepresentation` subtype, so orphan cleanup never saw it; orphaned shapes (and their sub-representations and geometry items) are now cascaded out, and presentation layer assignments left with no items are dropped
+- Stripped IFC output now passes full `ifcopenshell.validate` (schema + express rules) with 0 errors on Revit 2026 IFC4X3 exports
+
 ## [2.0.1] - 2026-09-12
 
 ### Fixed

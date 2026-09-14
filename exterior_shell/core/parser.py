@@ -106,6 +106,8 @@ IFC_TYPE_MAP: dict[str, ElementType] = {
     "IfcCovering": ElementType.COVERING,
     "IfcSpace": ElementType.SPACE,
     "IfcBuildingStorey": ElementType.BUILDING_STOREY,
+    "IfcSite": ElementType.SITE,
+    "IfcBuilding": ElementType.BUILDING,
     "IfcFurnishingElement": ElementType.FURNISHING,
     "IfcChimney": ElementType.CHIMNEY,
     "IfcPile": ElementType.PILE,
