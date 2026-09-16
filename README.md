@@ -202,6 +202,17 @@ Ambiguous elements
                  Fallback: exterior (conservative) if API fails
 ```
 
+## How Our Slice-Stack Compares
+
+| Approach | Handles sparse levels? | Needs sealed roof? | Speed | Our advantage |
+|---|---|---|---|---|
+| `IsExternal` | N/A | No | Instant | We work when IsExternal is wrong |
+| Room detection | Yes | No | Fast | We work when IfcSpace is missing |
+| Voxel flood-fill | Yes | Yes | Slow | We're roof-free |
+| Ray tracing | Yes | No | Slow | We're cheap |
+| **Our slice-stack** | **Yes (with Tier 2 fix)** | **No** | **Fast** | **Lightweight, no dependencies** |
+
+
 ## Provenance Metadata
 
 Every extraction records full provenance for traceability:

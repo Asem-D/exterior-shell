@@ -13,7 +13,8 @@ import click
 
 from . import __version__
 from .core.parser import parse_ifc
-from .core.classifier import classify_all, resolve_ambiguities
+from .core.classifier import classify_all, rebuild_report, resolve_ambiguities
+from .core.envelope import apply_geometry_classification
 from .core.assembler import assemble_shell, get_shell_stats
 from .core.models import Classification, ExtractionResult, ExtractionParams
 from .export.stripped_ifc import export_stripped_ifc
@@ -82,6 +83,18 @@ def _run_extract_pipeline(
     else:
         click.echo("Classifying elements...", err=True)
         report_data = classify_all(elements)
+
+        # v2.1 geometry pass: slice-stack envelope + face-exposure fallback
+        # re-judge candidate types before AI is consulted.
+        geo_stats = apply_geometry_classification(elements)
+        if geo_stats["judged"]:
+            click.echo(
+                f"  Geometry pass: {geo_stats['envelope_exterior']} envelope-exterior, "
+                f"{geo_stats['exposure_exterior']} exposure-exterior, "
+                f"{geo_stats['geometry_interior']} interior (of {geo_stats['judged']} judged)",
+                err=True,
+            )
+            report_data = rebuild_report(elements)
 
         if report_data.ambiguous_count > 0:
             if ai:

@@ -178,6 +178,27 @@ def classify_all(elements: list[Element]) -> ClassificationReport:
     return report
 
 
+def rebuild_report(elements: list[Element]) -> ClassificationReport:
+    """Rebuild a ClassificationReport from elements' current classifications.
+
+    Used after passes that mutate classifications in place (the v2.1 geometry
+    envelope pass), where re-running classify_all would overwrite the verdicts
+    with fresh type-rule results.
+    """
+    report = ClassificationReport(total_elements=len(elements))
+    for element in elements:
+        if element.classification == Classification.EXTERIOR:
+            report.exterior_count += 1
+            report.exterior_elements.append(element)
+        elif element.classification == Classification.INTERIOR:
+            report.interior_count += 1
+            report.interior_elements.append(element)
+        else:
+            report.ambiguous_count += 1
+            report.ambiguous_elements.append(element)
+    return report
+
+
 def resolve_ambiguities(
     report: ClassificationReport,
     use_ai: bool = False,
