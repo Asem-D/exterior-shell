@@ -81,7 +81,7 @@ exterior-shell extract building.ifc --tiles3d --footprint --no-stripped-ifc
 exterior-shell batch /path/to/models/ --tiles3d
 ```
 
-### Stripped IFC only (no GIS output)
+### Footprint only (no stripped IFC)
 
 ```bash
 exterior-shell extract building.ifc --no-stripped-ifc --footprint
@@ -275,7 +275,7 @@ exterior_shell/
 
 This problem has been approached from different angles:
 
-- **IfcEnvelopeExtractor** (TU Delft): Academic-grade tool outputting CityJSON, STEP, and OBJ with full LoD coverage (LOD0 through LOD5). Built on the Biljecki et al. LoD framework. Different output ecosystem from exterior-shell. If you're building 3D city models with CityJSON, that's the tool. [GitHub](https://github.com/tudelft3d/IFC_BuildingEnvExtractor)
+- **IfcEnvelopeExtractor** (TU Delft): Academic-grade tool outputting CityJSON, STEP, and OBJ with wide LoD coverage (LOD0 through LOD5). Built on the Biljecki et al. LoD framework. Different output ecosystem from exterior-shell. If you're building 3D city models with CityJSON, that's the tool. [GitHub](https://github.com/tudelft3d/IFC_BuildingEnvExtractor)
 - **IfcConvert** (`--exterior-only`): Open-source, extracts exterior shell as mesh. No structurally valid IFC output, no GIS attributes.
 - **Esri ExteriorShell**: Built into ArcGIS Pro. Automatic sublayer extraction when loading IFC/RVT. Often misses roofs, ground floors, and includes interior geometry.
 
