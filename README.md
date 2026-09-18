@@ -287,8 +287,9 @@ exterior-shell targets a narrower niche: GIS practitioners who need a clean stri
 - **v1.3** - AI-assisted classification for ambiguous elements (multi-view rendering + vision API, BYOK)
 - **v1.4** - Batch processing, config file defaults, enriched info command
 - **v1.5** - Provenance metadata: extraction parameters, contributing element IDs, spatial consistency validation
-- **v2.0** (current) - 3D Tiles 1.1 export: CesiumJS-ready GLB + tileset.json, pure Python, zero new dependencies
-- **v2.1** (planned) - CityJSON export (semantic city model: WallSurface, RoofSurface, GroundSurface from existing element classification), LOD generation, Revit direct integration (.rvt)
+- **v2.0** - 3D Tiles 1.1 export: CesiumJS-ready GLB + tileset.json, pure Python, zero new dependencies
+- **v2.1** (current) - Tier-2 slice-stack envelope: 3D envelope extraction with elevation bands, connected-component analysis, deep orphan cleanup, CityJSON export
+- **v2.2** (planned) - LOD generation, Revit direct integration (.rvt)
 
 ## License
 

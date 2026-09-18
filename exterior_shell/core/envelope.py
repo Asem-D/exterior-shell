@@ -366,7 +366,22 @@ def classify_footprints(
         if env is not None:
             outdoor_ref = unary_union(parts + [env])
         else:
-            outdoor_ref = solid.buffer(0.15)
+            # At untrusted slices the wall ribbon is too thin to
+            # bound the building; check if the solid's convex hull
+            # covers a meaningful fraction of the inherited envelope.
+            # If not (sparse walls, e.g. a single rear wall), the
+            # buffer approach inflates the outdoor region across the
+            # entire rectangle, falsely exposing interior elements.
+            # Use the inherited envelope to anchor the indoor side.
+            eff = effective.get(zc)
+            if eff is not None and solid.area > 0:
+                hull_ratio = solid.convex_hull.area / eff.area
+                if hull_ratio < 0.25:
+                    outdoor_ref = unary_union(parts + [eff])
+                else:
+                    outdoor_ref = solid.buffer(0.15)
+            else:
+                outdoor_ref = solid.buffer(0.15)
         comp = rect.difference(outdoor_ref)
         comps = list(comp.geoms) if isinstance(comp, MultiPolygon) else [comp]
         outdoor = unary_union(

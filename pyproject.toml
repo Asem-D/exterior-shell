@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "exterior-shell"
-version = "2.0.2"
+dynamic = ["version"]
 description = "Extract lightweight exterior shells from BIM models (IFC). Stripped IFC + GeoJSON footprint + 3D Tiles (glTF) export + optional AI classification for GIS and web visualization."
 readme = "README.md"
 license = "MIT"
@@ -48,6 +48,9 @@ dev = [
 
 [project.scripts]
 exterior-shell = "exterior_shell.cli:main"
+
+[tool.hatch.version]
+path = "exterior_shell/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["exterior_shell"]

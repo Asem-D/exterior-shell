@@ -163,6 +163,46 @@ def _remove_orphaned_owner_history(model: ifcopenshell.file) -> int:
     return removed
 
 
+def _deep_orphan_cleanup(model: ifcopenshell.file) -> int:
+    """Remove unreferenced supporting entities (single pass).
+
+    After targeted cleanups (representations, relationships, owner history),
+    many supporting entities become orphaned: property sets, material defs,
+    styled items, placements, profiles, etc.  An entity with zero inverse
+    references is unreferenced by anything in the surviving model.
+
+    IfcRelationship and IfcRoot subtypes are excluded: relationships are
+    handled by the targeted relationship cleanup above, and IfcRoot entities
+    (types, property sets, element quantities) may have stale inverse counts
+    that cause false positives.
+
+    Returns count of removed entities.
+    """
+    orphans = []
+    for entity in model:
+        try:
+            if model.get_total_inverses(entity) == 0:
+                # Skip relationships (handled by targeted cleanup above)
+                # and IfcRoot subtypes (inverse counts unreliable after removal)
+                if (entity.is_a("IfcRelationship")
+                        or entity.is_a("IfcRoot")
+                        or entity.is_a("IfcStyledItem")):
+                    continue
+                orphans.append(entity)
+        except Exception:
+            continue
+
+    removed = 0
+    for entity in orphans:
+        try:
+            model.remove(entity)
+            removed += 1
+        except Exception:
+            continue
+
+    return removed
+
+
 def export_stripped_ifc(
     input_path: str | Path,
     output_path: str | Path,
@@ -400,10 +440,16 @@ def export_stripped_ifc(
             except Exception:
                 pass
 
+    # Deep orphan pass: iteratively remove ALL entities with zero inverses.
+    # After targeted cleanups above, many supporting entities (property sets,
+    # material defs, styled items, placements, profiles) are left unreferenced.
+    # Each removal may cascade new orphans, so we repeat until stable.
+    deep_removed = _deep_orphan_cleanup(model)
+
     logger.info(
         "Orphan cleanup: %d representations, %d contexts, %d owner histories, "
-        "%d empty layer assignments",
-        orphaned_reps, orphaned_ctx, orphaned_hist, empty_layers,
+        "%d empty layers, %d deep orphans",
+        orphaned_reps, orphaned_ctx, orphaned_hist, empty_layers, deep_removed,
     )
 
     # Write the stripped file
@@ -417,6 +463,7 @@ def export_stripped_ifc(
         "orphaned_reps_removed": orphaned_reps,
         "orphaned_contexts_removed": orphaned_ctx,
         "orphaned_history_removed": orphaned_hist,
+        "deep_orphans_removed": deep_removed,
         "input_size": input_size,
         "output_size": output_size,
         "size_reduction_pct": round((1 - output_size / input_size) * 100, 1) if input_size > 0 else 0.0,

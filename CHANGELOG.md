@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-18
+
+### Added
+
+- **Tier-2 slice-stack envelope**: 3D envelope extraction using 0.5m elevation bands, footprint threshold filtering, and connected-component analysis for multi-story buildings
+- Deep orphan cleanup pass removes unreferenced supporting entities (property sets, material defs, placements, profiles) from stripped IFC, reducing file size
+- New `deep_orphans_removed` field in extraction stats JSON
+
+### Fixed
+
+- **IfcStyledItem preservation**: `IfcStyledItem` (IFC surface colors/appearance) was incorrectly removed by orphan cleanup because `get_total_inverses()` returns 0 after bulk removal; styled items are now preserved
+- **Rear wall misclassification**: single sparse walls at elevation slices (e.g. rear wall) no longer inflate the outdoor reference across the entire footprint; convex hull ratio check (25% threshold) falls back to inherited envelope
+- **pyproject.toml version drift**: switched to dynamic versioning via `[tool.hatch.version]` reading from `__init__.py` to prevent version mismatches between build metadata and runtime version
+
 ## [2.0.2] - 2026-09-14
 
 ### Fixed
